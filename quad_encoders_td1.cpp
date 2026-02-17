@@ -1,5 +1,6 @@
 #include "mbed.h"
 #include "QEI.h"
+#include "C12832.h"
 
 constexpr int PPR = 256;
 
@@ -12,7 +13,6 @@ DigitalOut led(D5); //red led
 
 //initialise
 volatile int last_tick_left = 0, last_tick_right = 0; //previous encoder counts 
-volatile float cps_left = 0.0f, cps_right = 0.0f;   // counts per second
 
 void speed_tick(){
     const int now_left = left_encoder.getPulses();    //new encoder counts
@@ -30,9 +30,13 @@ void speed_tick(){
 }
 
 int main(){ 
+    C12832 lcd(D11, D13, D12, D7, D10); 
+    lcd.cls();
+    lcd.locate(20,0);
     speedTicker.attach(&speed_tick, 50ms); //20 Hz speed update
-    while (true) {
-        // here write the logic for rpm, speed etc etc ill do later
 
+    while(true){
+        lcd.printf("Left: %d, Right: %d\n", left_encoder.getPulses(), right_encoder.getPulses());
+        ThisThread::sleep_for(500ms);
     }
 }
