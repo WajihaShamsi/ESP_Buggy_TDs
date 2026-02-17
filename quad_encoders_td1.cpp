@@ -4,7 +4,7 @@
 constexpr int PPR = 256;
 
 QEI left_encoder(PA_6, PA_7, NC, PPR, QEI::X4_ENCODING);
-QEI right_encoder(PB_6, PB_7, NC, PPR, QEI::X4_ENCODING);
+QEI right_encoder(PB_6, PC_7, NC, PPR, QEI::X4_ENCODING);
 
 
 Ticker speedTicker;
