@@ -1,6 +1,5 @@
 #include "mbed.h"
 #include "QEI.h"
-#include "C12832.h"
 
 constexpr int PPR = 256;
 
@@ -30,13 +29,9 @@ void speed_tick(){
 }
 
 int main(){ 
-    C12832 lcd(D11, D13, D12, D7, D10); 
-    lcd.cls();
-    lcd.locate(20,0);
     speedTicker.attach(&speed_tick, 50ms); //20 Hz speed update
 
     while(true){
-        lcd.printf("Left: %d, Right: %d\n", left_encoder.getPulses(), right_encoder.getPulses());
         ThisThread::sleep_for(500ms);
     }
 }
