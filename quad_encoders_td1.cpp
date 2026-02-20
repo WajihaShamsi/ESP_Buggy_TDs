@@ -1,10 +1,11 @@
 #include "mbed.h"
 #include "QEI.h"
+#include "C12832.h"
 
 constexpr int PPR = 256;
 
-QEI left_encoder(PA_6, PA_7, NC, PPR, QEI::X4_ENCODING);
-QEI right_encoder(PB_6, PC_7, NC, PPR, QEI::X4_ENCODING);
+QEI left_encoder(PB_2, PB_1, NC, PPR, QEI::X4_ENCODING);
+QEI right_encoder(PB_15, PB_14, NC, PPR, QEI::X4_ENCODING);
 
 
 Ticker speedTicker;
@@ -29,9 +30,21 @@ void speed_tick(){
 }
 
 int main(){ 
+    C12832 lcd(D11, D13, D12, D7, D10); 
     speedTicker.attach(&speed_tick, 50ms); //20 Hz speed update
 
     while(true){
-        ThisThread::sleep_for(500ms);
+        int left = left_encoder.getPulses(); //added logic to displaym ticks to lcd screen
+        int right = right_encoder.getPulses();
+
+        lcd.cls();
+        lcd.locate(0, 0);
+        lcd.printf("Left Encoder: %d", left);
+
+        lcd.locate(0, 20);
+        lcd.printf("Right Encoder: %d", right);
+
+        ThisThread::sleep_for(200ms);
+
     }
 }
