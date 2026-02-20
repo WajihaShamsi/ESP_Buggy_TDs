@@ -1,0 +1,82 @@
+#include "mbed.h"
+#include <cmath>
+
+#include "Serial.h"
+
+Serial pc(USBTX, USBRX);
+
+PwmOut pwm1(D15);
+PwmOut pwm2(D5);
+
+DigitalOut enable(D2);
+
+// Direction only (no bipolar control pin)
+DigitalOut dir1(D14);
+DigitalOut dir2(D4);
+
+AnalogIn pot1(A0);
+AnalogIn pot2(A1);
+
+const float CENTER   = 0.5f;
+const float DEADBAND = 0.02f;
+
+int main()
+{
+    // 20kHz PWM
+    pwm1.period_us(50);
+    pwm2.period_us(50);
+
+    pwm1.write(0.0f);
+    pwm2.write(0.0f);
+
+    wait_us(50000);
+    enable = 1;
+
+    while (true)
+    {
+        float p1 = pot1.read();
+        float p2 = pot2.read();
+
+        // -------- Motor 1 --------
+        float error1 = p1 - CENTER;
+        pc.printf("Error1: %.2f\n\r", error1);
+        if (fabs(error1) < DEADBAND)
+        {
+            
+            pwm1.write(0.0f);
+        }
+        else
+        {
+            float speed1 = fabs(error1) * 2.0f;
+
+            // <0.5 正转, >0.5 反转
+            if (error1 < 0)
+                dir1 = 1;
+            else
+                dir1 = 0;
+
+            pwm1.write(speed1);
+        }
+
+        // -------- Motor 2 --------
+        float error2 = p2 - CENTER;
+
+        if (fabs(error2) < DEADBAND)
+        {
+            pwm2.write(0.0f);
+        }
+        else
+        {
+            float speed2 = fabs(error2) * 2.0f;
+
+            if (error2 < 0)
+                dir2 = 1;
+            else
+                dir2 = 0;
+
+            pwm2.write(speed2);
+        }
+
+        wait_us(5000);
+    }
+}
