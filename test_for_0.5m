@@ -1,0 +1,114 @@
+#include "mbed.h"
+#include "QEI.h"
+#include "C12832.h"
+
+/*--------------------------Constants--------------------------*/
+int PPR = 256;
+int GEAR_RATIO = 15;
+float WHEEL_RADIUS = 0.0394f; // m
+float PI = 3.1415926f;
+float PWM_FREQ_HZ = 20000.0f; // 20 kHz
+int COUNTS_PER_MOTOR_REV = PPR * 4;
+int COUNTS_PER_WHEEL_REV = COUNTS_PER_MOTOR_REV * GEAR_RATIO;
+float WHEEL_CIRC = 2.0f * PI * WHEEL_RADIUS; // ~0.2475 m
+float COUNTS_PER_M = (float)COUNTS_PER_WHEEL_REV / WHEEL_CIRC;
+
+const float CENTER   = 0.5f;
+const float DEADBAND = 0.02f;
+
+int COUNTS_0_5M = (int)(0.5f * COUNTS_PER_M);
+
+
+/*--------------------------Hardware--------------------------*/
+QEI left_encoder(PA_13, PA_14, NC, PPR, QEI::X4_ENCODING);
+QEI right_encoder(PC_15, PC_14, NC, PPR, QEI::X4_ENCODING);
+
+
+Ticker speedTicker;
+//DigitalOut led(D5); //red led 
+
+//initialise
+volatile int last_tick_left = 0, last_tick_right = 0; //previous encoder counts 
+
+PwmOut pwmL(PB_1);
+PwmOut pwmR(PB_15);
+
+DigitalOut enable(D2);
+
+// Direction only (no bipolar control pin)
+DigitalOut dirL(D6);
+DigitalOut dirR(D4);
+
+//AnalogIn pot1(A0);
+//AnalogIn pot2(A1);
+
+/*--------------------------Helpers--------------------------*/
+
+void speed_tick(){
+    const int now_left = left_encoder.getPulses();    //new encoder counts
+    const int now_right = right_encoder.getPulses();   
+
+    const int dL = now_left - last_tick_left;      //difference
+    const int dR = now_right - last_tick_right;
+
+    last_tick_left = now_left; //update
+    last_tick_right = now_right;
+
+}
+
+static inline int abs_i(int x) { return (x < 0) ? -x : x; }
+
+void motors_stop() {
+    pwmL.write(0.0f);
+    pwmR.write(0.0f);
+}
+
+int main(){ 
+
+    C12832 lcd(D11, D13, D12, D7, D10); 
+    speedTicker.attach(&speed_tick, 5); //20 Hz speed update
+
+    // 20kHz PWM
+    pwmL.period_us(50);
+    pwmR.period_us(50);
+
+    motors_stop();
+
+    dirL = 1;
+    dirR = 1;
+
+    left_encoder.reset();
+    right_encoder.reset();
+
+    wait_us(50000);
+    
+    const float duty = 0.40f;   // start modest; raise if it stalls
+    pwmL.write(duty);
+    pwmR.write(duty);
+
+    while(true){
+        int left = left_encoder.getPulses(); //added logic to displaym ticks to lcd screen
+        int right = right_encoder.getPulses();
+
+        int left_abs  = abs_i(left);
+        int right_abs = abs_i(right);
+        int avg = (left_abs + right_abs) / 2;
+
+        lcd.cls();
+        lcd.locate(0, 0);
+        lcd.printf("Left Encoder: %d", left);
+
+        lcd.locate(0, 10);
+        lcd.printf("Right Encoder: %d", right);
+
+        lcd.locate(0, 20);
+        lcd.printf("Avg:%d / %d", avg, COUNTS_0_5M);
+
+        if (avg >= COUNTS_0_5M) {
+            motors_stop();
+            break;
+        }
+
+        wait_ms(50);
+    }
+}
