@@ -13,10 +13,10 @@ int COUNTS_PER_WHEEL_REV = COUNTS_PER_MOTOR_REV * GEAR_RATIO;
 float WHEEL_CIRC = 2.0f * PI * WHEEL_RADIUS; // ~0.2475 m
 float COUNTS_PER_M = (float)COUNTS_PER_WHEEL_REV / WHEEL_CIRC;
 
-const float CENTER   = 0.5f;
-const float DEADBAND = 0.02f;
+//const float CENTER   = 0.5f;
+//const float DEADBAND = 0.02f;
 
-int COUNTS_0_5M = (int)(0.5f * COUNTS_PER_M);
+int COUNTS_0_5M = (int)(0.5f * COUNTS_PER_M)/19;
 
 
 /*--------------------------Hardware--------------------------*/
@@ -33,7 +33,7 @@ volatile int last_tick_left = 0, last_tick_right = 0; //previous encoder counts
 PwmOut pwmL(PC_8);
 PwmOut pwmR(PC_6);
 
-DigitalOut enable(D2);
+DigitalOut enable(PC_4);
 
 // Direction only (no bipolar control pin)
 DigitalOut dirL(PA_12);
@@ -88,13 +88,16 @@ int main(){
     pwmL.write(duty);
     pwmR.write(duty);
 
+    left_encoder.reset();
+    right_encoder.reset();
+
     while(true){
         int left = left_encoder.getPulses(); //added logic to displaym ticks to lcd screen
         int right = right_encoder.getPulses();
 
         int left_abs  = abs_i(left);
         int right_abs = abs_i(right);
-        int avg = (left_abs + right_abs) / 2;
+        int avg = (left_abs + right_abs);
 
         lcd.cls();
         lcd.locate(0, 0);
