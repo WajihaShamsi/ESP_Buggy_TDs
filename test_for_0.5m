@@ -20,8 +20,8 @@ int COUNTS_0_5M = (int)(0.5f * COUNTS_PER_M);
 
 
 /*--------------------------Hardware--------------------------*/
-QEI left_encoder(PA_13, PA_14, NC, PPR, QEI::X4_ENCODING);
-QEI right_encoder(PC_15, PC_14, NC, PPR, QEI::X4_ENCODING);
+QEI left_encoder(PB_2, PB_1, NC, PPR, QEI::X4_ENCODING);
+QEI right_encoder(PB_15, PB_14, NC, PPR, QEI::X4_ENCODING);
 
 
 Ticker speedTicker;
@@ -30,14 +30,14 @@ Ticker speedTicker;
 //initialise
 volatile int last_tick_left = 0, last_tick_right = 0; //previous encoder counts 
 
-PwmOut pwmL(PB_1);
-PwmOut pwmR(PB_15);
+PwmOut pwmL(PC_8);
+PwmOut pwmR(PC_6);
 
 DigitalOut enable(D2);
 
 // Direction only (no bipolar control pin)
-DigitalOut dirL(D6);
-DigitalOut dirR(D4);
+DigitalOut dirL(PA_12);
+DigitalOut dirR(PB_12);
 
 //AnalogIn pot1(A0);
 //AnalogIn pot2(A1);
@@ -59,11 +59,11 @@ void speed_tick(){
 static inline int abs_i(int x) { return (x < 0) ? -x : x; }
 
 void motors_stop() {
-    pwmL.write(0.0f);
-    pwmR.write(0.0f);
+    pwmL.write(0.5f);
+    pwmR.write(0.5f);
 }
 
-int main(){ 
+int main(){
 
     C12832 lcd(D11, D13, D12, D7, D10); 
     speedTicker.attach(&speed_tick, 5); //20 Hz speed update
@@ -71,6 +71,8 @@ int main(){
     // 20kHz PWM
     pwmL.period_us(50);
     pwmR.period_us(50);
+
+    enable = 1;
 
     motors_stop();
 
@@ -82,7 +84,7 @@ int main(){
 
     wait_us(50000);
     
-    const float duty = 0.40f;   // start modest; raise if it stalls
+    const float duty = 0.35f;   // start modest; raise if it stalls
     pwmL.write(duty);
     pwmR.write(duty);
 
@@ -96,7 +98,7 @@ int main(){
 
         lcd.cls();
         lcd.locate(0, 0);
-        lcd.printf("Left Encoder: %d", left);
+        lcd.printf("Left Encoder new!: %d", left);
 
         lcd.locate(0, 10);
         lcd.printf("Right Encoder: %d", right);
