@@ -25,7 +25,7 @@ float COUNTS_PER_M = (float)COUNTS_PER_WHEEL_REV / WHEEL_CIRC;
 int COUNTS_0_5M = (int)(0.5f * COUNTS_PER_M)/19;
 int COUNTS_RIGHT = (int)(0.2475f * COUNTS_PER_M)/11;
 
-int COUNTS_180 = (int)(0.2475f *2* COUNTS_PER_M)/10;
+int COUNTS_180 = (int)(COUNTS_RIGHT/1.4);
 
 /*--------------------------Hardware--------------------------*/
 QEI left_encoder(PB_2, PB_1, NC, PPR, QEI::X4_ENCODING);
