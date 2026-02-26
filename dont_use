@@ -1,0 +1,328 @@
+/* mbed Microcontroller Library
+ * Copyright (c) 2019 ARM Limited
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include "mbed.h"
+#include "QEI.h"
+
+
+/*--------------------------Constants--------------------------*/
+float SAMPLE_TIME = 0.05; //s
+int PPR = 256;
+
+int GEAR_RATIO = 15;
+float WHEEL_RADIUS = 0.0394f; // m
+float PI = 3.1415926f;
+float WHEEL_BASE = 0.175f; //m
+float PWM_FREQ_HZ = 20000.0f; // 20 kHz
+int COUNTS_PER_MOTOR_REV = PPR * 4;
+//int COUNTS_PER_WHEEL_REV = COUNTS_PER_MOTOR_REV * GEAR_RATIO;
+int COUNTS_PER_WHEEL_REV_R = 1027;
+int COUNTS_PER_WHEEL_REV_L = 1047;
+
+float WHEEL_CIRC = 2.0f * PI * WHEEL_RADIUS; // ~0.2475 m
+float COUNTS_PER_M_R = (float)COUNTS_PER_WHEEL_REV_R / WHEEL_CIRC;
+float COUNTS_PER_M_L = (float)COUNTS_PER_WHEEL_REV_L / WHEEL_CIRC;
+
+float COUNTS = (COUNTS_PER_M_L + COUNTS_PER_M_R)/2;
+
+/*--------------------------Velocity Globals--------------------------*/
+int dL_ticks = 0;
+int dR_ticks = 0;
+
+float tickRateL = 0.0f;   // ticks/s
+float tickRateR = 0.0f;
+
+float vL = 0.0f;          // m/s (left wheel linear velocity)
+float vR = 0.0f;          // m/s (right wheel linear velocity)
+
+float v_robot = 0.0f;
+float w_robot = 0.0f;   // rad/s
+
+/*--------------------------Hardware--------------------------*/
+QEI left_encoder(PB_2, PB_1, NC, PPR, QEI::X4_ENCODING);
+QEI right_encoder(PB_15, PB_14, NC, PPR, QEI::X4_ENCODING);
+
+
+Ticker speedTicker;
+//DigitalOut led(D5); //red led 
+
+//initialise
+volatile int last_tick_left = 0, last_tick_right = 0; //previous encoder counts 
+
+PwmOut pwmL(PC_8);
+PwmOut pwmR(PC_6);
+
+DigitalOut enable(PC_4);
+
+// Direction only (no bipolar control pin)
+DigitalOut dirL(PA_12);
+DigitalOut dirR(PB_12);
+
+/*--------------------------Helper Functions--------------------------*/
+
+static inline float ticksToWheelLinearVel(float tick_rate_ticks_per_s, float counts) {
+    const float rev_per_s = tick_rate_ticks_per_s / (float)counts;
+    return rev_per_s * WHEEL_CIRC;   // m/s
+}
+
+void speed_tick(){
+    const int now_left = left_encoder.getPulses();    //new encoder counts
+    const int now_right = right_encoder.getPulses();   
+
+    const int dL = now_left - last_tick_left;      //difference
+    const int dR = now_right - last_tick_right;
+
+    last_tick_left = now_left; //update
+    last_tick_right = now_right;
+
+    // ticks/s
+    tickRateL = (float)dL / SAMPLE_TIME;
+    tickRateR = (float)dR / SAMPLE_TIME;
+
+    // wheel linear velocities (m/s)
+    vL = ticksToWheelLinearVel(tickRateL, COUNTS_PER_M_L);
+    vR = ticksToWheelLinearVel(tickRateR, COUNTS_PER_M_R);
+
+    // robot translational + angular velocity :contentReference[oaicite:4]{index=4}
+    v_robot = (vR + vL) * 0.5f;           // m/s
+    w_robot = (vR - vL) / WHEEL_BASE;   // rad/s
+}
+
+static inline int distToTicks(float dist_m, float counts) {
+    return (int)(dist_m * counts);
+}
+
+static inline int turnToTicks(float theta_rad, float counts) {
+    float arc_m = (WHEEL_BASE * 0.5f) * theta_rad; // per wheel
+    return (int)(arc_m * counts/1.3);
+}
+
+void setLeftMotor(float duty) {
+    //enable = 1;
+    pwmL.write(duty);
+  //  pwmR.write(0.5f);
+
+}
+
+void setRightMotor(float duty) {
+    //enable = 1;
+   // pwmL.write(0.5f);
+    pwmR.write(duty);
+}
+
+void stopMotors() {
+    pwmL.write(0.5f);
+    pwmR.write(0.5f);
+    //enable = 0;
+}
+
+int avgAbsTicks() {
+    int l = abs(left_encoder.getPulses());
+    int r = abs(right_encoder.getPulses());
+    return (l + r)/2; //add divide by 2 when the other one starts working
+}
+
+int avgAbsTurnLeft() {
+    int l = abs(left_encoder.getPulses());
+    //int r = abs(right_encoder.getPulses());
+    return l;
+}
+
+int avgAbsTurnRight() {
+    //int l = abs(left_encoder.getPulses());
+    int r = abs(right_encoder.getPulses());
+    return r;
+}
+
+/*--------------------------FSM--------------------------*/
+enum State {
+    START,
+    FWD_SIDE,
+    TURN_LEFT_90,
+    FWD_STOP_AT_START,
+    TURN_180,
+    REV_SIDE,
+    TURN_LEFT_90_REV,
+    ONE_MORE,
+    DONE
+};
+
+State state = START;
+
+int side_count = 0;       // 0..3 for forward square
+int rev_side_count = 0;   // 0..3 for reverse square
+
+/*--------------------------Main--------------------------*/
+
+int main()
+{
+    speedTicker.attach(&speed_tick, SAMPLE_TIME); //20 Hz speed update
+
+        // PWM frequency
+    pwmL.period(1.0f / PWM_FREQ_HZ);
+    pwmR.period(1.0f / PWM_FREQ_HZ);
+
+    float v_robot = (vR + vL) * 0.5f;
+    float w_robot = (vR - vL) / WHEEL_BASE;   // rad/s
+
+    // bipolar
+    dirL = 1;
+    dirR = 1;
+
+    enable = 1;
+
+    left_encoder.reset();
+    right_encoder.reset();
+
+    const int COUNTS_TURN_90_L  = turnToTicks(PI/2.0f, COUNTS_PER_M_L);
+    const int COUNTS_TURN_90_R  = turnToTicks(PI/2.0f, COUNTS_PER_M_R);
+    const int COUNTS_TURN_180_L = turnToTicks(PI, COUNTS_PER_M_L);
+    const int COUNTS_TURN_180_R = turnToTicks(PI, COUNTS_PER_M_R);
+    const int COUNTS_0_5M = distToTicks(0.45f, COUNTS);
+
+    while (true) {
+
+        switch (state) {
+
+            case START: {
+                side_count = 0;
+                rev_side_count = 0;
+                left_encoder.reset();
+                right_encoder.reset();
+                state = FWD_SIDE;
+                break;
+            }
+
+            // ---------- Forward square ----------
+            case FWD_SIDE: {
+                setLeftMotor(0.35f);
+                setRightMotor(0.35f);
+
+                if (avgAbsTicks() >= COUNTS_0_5M) {
+                    stopMotors();
+                    left_encoder.reset();
+                    right_encoder.reset();
+                    wait_ms(200);
+                    state = TURN_LEFT_90;
+                    //state = DONE;
+                }
+                break;
+            }
+
+            case TURN_LEFT_90: {
+                // Turn left in place: left backward, right forward
+                setLeftMotor(0.35f);
+                setRightMotor(0.65f);
+
+                // Use average ticks so it works even if one wheel slips a bit
+                if ((avgAbsTurnLeft() >= COUNTS_TURN_90_L) && (avgAbsTurnRight() >= COUNTS_TURN_90_R)) {
+                    stopMotors();
+                    left_encoder.reset();
+                    right_encoder.reset();
+                    wait_ms(200);
+
+                    side_count++;
+
+                    if (side_count >= 3) {
+                        // Finished forward square: we should be back near start
+                        state = FWD_STOP_AT_START;
+                    } else {
+                        state = FWD_SIDE;
+                    }
+                }
+                break;
+            }
+
+            case FWD_STOP_AT_START: {
+                setLeftMotor(0.35f);
+                setRightMotor(0.35f);
+
+                if (avgAbsTicks() >= COUNTS_0_5M) {
+                    stopMotors();
+                    left_encoder.reset();
+                    right_encoder.reset();
+                    wait_ms(200);
+                    state = TURN_180;
+                    //state = DONE;
+                }
+                break;
+            }
+
+            // ---------- Turn around ----------
+            case TURN_180: {
+                // Turn 180: same as two 90s
+                setLeftMotor(0.35f);
+                setRightMotor(0.65f);
+
+                if ((avgAbsTurnLeft() >= COUNTS_TURN_180_L) && (avgAbsTurnRight() >= COUNTS_TURN_180_R)) {
+                    stopMotors();
+                    left_encoder.reset();
+                    right_encoder.reset();
+                    wait_ms(200);
+                    state = REV_SIDE;
+                }
+                break;
+            }
+
+            // ---------- Reverse square ----------
+            case REV_SIDE: {
+                // Reverse direction (drive backward)
+                setLeftMotor(0.35f);
+                setRightMotor(0.35f);
+
+                if (avgAbsTicks() >= COUNTS_0_5M) {
+                    stopMotors();
+                    left_encoder.reset();
+                    right_encoder.reset();
+                    wait_ms(200);
+                    state = TURN_LEFT_90_REV;
+                }
+                break;
+            }
+
+            case TURN_LEFT_90_REV: {
+                // While reversing square, keep same “turn left” relative to chassis:
+                // still rotate the chassis left using same in-place turn
+                setLeftMotor(0.65f);
+                setRightMotor(0.35f);
+
+                if ((avgAbsTurnLeft() >= COUNTS_TURN_90_L) && (avgAbsTurnRight() >= COUNTS_TURN_90_R)) {
+                    stopMotors();
+                    left_encoder.reset();
+                    right_encoder.reset();
+                    wait_ms(200);
+
+                    rev_side_count++;
+
+                    if (rev_side_count >= 3) {
+                        state = ONE_MORE;
+                    } else {
+                        state = REV_SIDE;
+                    }
+                }
+                break;
+            }
+
+            case ONE_MORE: {
+                // Reverse direction (drive backward)
+                setLeftMotor(0.35f);
+                setRightMotor(0.35f);
+
+                if (avgAbsTicks() >= COUNTS_0_5M) {
+                    stopMotors();
+                    left_encoder.reset();
+                    right_encoder.reset();
+                    wait_ms(200);
+                    state = DONE;
+                }
+                break;
+            }
+              case DONE: {
+                stopMotors();
+                while (true) { }
+            }
+        }
+    }
+}
