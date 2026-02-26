@@ -1,0 +1,97 @@
+#include "mbed.h"
+#include <cmath>   // for fabsf
+
+
+// PWM 输出 -> Motor Drive Board JP1a: PWM1 (pin 3), PWM2 (pin 6)
+static const PinName PWM1_PIN = PC_6;     // MCU -> PWM1
+static const PinName PWM2_PIN = PC_8;    // MCU -> PWM2
+
+// Enable 输出 -> Motor Drive Board JP1a: Enable (pin 7)
+static const PinName EN_PIN   = D8;     // MCU -> Enable
+
+// 电位器输入（mbed application board/shield 上 Pot1/Pot2 常见为 A0/A1）
+static const PinName POT1_PIN = A0;     // Pot1 -> duty for PWM1
+static const PinName POT2_PIN = A1;     // Pot2 -> duty for PWM2
+
+
+// ======================
+static const float PWM_FREQ_HZ  = 20000.0f; // 20 kHz
+static const float DUTY_MIN     = 0.05f;    // 5%
+static const float DUTY_MAX     = 0.95f;    // 95%
+static const float POT_DEADBAND = 0.01f;    // 1% 死区，减少抖动
+static const float FILTER_ALPHA = 0.20f;    // 一阶滤波系数(0~1)
+
+// 更新周期（用 wait_us，避免 chrono / ThisThread）
+static const int UPDATE_US      = 5000;     // 5 ms
+static const int STARTUP_US     = 50000;    // 50 ms
+
+
+// ======================
+static float clampf(float x, float lo, float hi) {
+    if (x < lo) return lo;
+    if (x > hi) return hi;
+    return x;
+}
+
+// 把 0~1 的 pot 值映射到 DUTY_MIN~DUTY_MAX（并限幅）就是单纯的用来把Duty限制到0.05-0.95之内的
+static float pot_to_duty(float pot) {
+    pot = clampf(pot, 0.0f, 1.0f);
+    float duty = DUTY_MIN + pot * (DUTY_MAX - DUTY_MIN);
+    return clampf(duty, DUTY_MIN, DUTY_MAX);
+}
+
+int main() {
+    // ---- 外设对象 ----
+    PwmOut pwm1(PWM1_PIN);
+    PwmOut pwm2(PWM2_PIN);
+    DigitalOut enable(EN_PIN, 0);   // 上电默认先关
+    AnalogIn pot1(POT1_PIN);
+    AnalogIn pot2(POT2_PIN);
+
+    // ---- 设置 PWM 频率（周期）----
+    // 20 kHz -> 50 us
+    pwm1.period_us(50);
+    pwm2.period_us(50);
+
+    // ---- 初始 duty（上电即可看到两路波形）----
+    pwm1.write(0.30f);
+    pwm2.write(0.70f);
+
+    // ---- 上电延时 + 使能 ----
+    wait_us(STARTUP_US);
+    enable = 1;
+
+    // ---- 抖动抑制/滤波状态变量 ----
+    float pot1_last = pot1.read();
+    float pot2_last = pot2.read();
+
+    float duty1_f = pot_to_duty(pot1_last);
+    float duty2_f = pot_to_duty(pot2_last);
+    pwm1.write(duty1_f);
+    pwm2.write(duty2_f);
+
+    while (true) {
+        // 1) 读取电位器（0~1）
+        float p1 = pot1.read();
+        float p2 = pot2.read();
+
+        // 2) 死区：变化很小就不更新（减少示波器抖）
+        if (fabsf(p1 - pot1_last) > POT_DEADBAND) pot1_last = p1;
+        if (fabsf(p2 - pot2_last) > POT_DEADBAND) pot2_last = p2;
+
+        // 3) 映射到 duty（5%~95%）
+        float duty1_target = pot_to_duty(pot1_last);
+        float duty2_target = pot_to_duty(pot2_last);
+
+        // 4) 一阶滤波（让变化更顺）
+        duty1_f = duty1_f + FILTER_ALPHA * (duty1_target - duty1_f);
+        duty2_f = duty2_f + FILTER_ALPHA * (duty2_target - duty2_f);
+
+        // 5) 输出 PWM
+        pwm1.write(duty1_f);
+        pwm2.write(duty2_f);
+
+        // 6) 限速：避免 CPU 满载 & duty 抖动更明显
+        wait_us(UPDATE_US);
+    }
+}
