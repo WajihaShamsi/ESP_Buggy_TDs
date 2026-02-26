@@ -22,22 +22,23 @@ float COUNTS_PER_M = (float)COUNTS_PER_WHEEL_REV / WHEEL_CIRC;
 //const float CENTER   = 0.5f;
 //const float DEADBAND = 0.02f;
 
+int COUNTS_0_45M = (int)(0.45f * COUNTS_PER_M)/18; //274.37
 int COUNTS_0_5M = (int)(0.5f * COUNTS_PER_M)/18; //274.37
 
 int COUNTS_ONE = COUNTS_0_5M*2; //548.7362
-
+/*
 int COUNTS_RIGHT_1 = (int)((11*PI/200)*COUNTS_ONE); //94.81
 
 int COUNTS_180 = (int)((0.11*PI)*COUNTS_ONE); //189.63
 
 int COUNTS_RIGHT_2 = (int)((23*PI/400)*COUNTS_ONE); //99.1245
-/*
-int COUNTS_RIGHT_1 = 95;
-
-int COUNTS_180 = 190;
-
-int COUNTS_RIGHT_2 = 99;
 */
+int COUNTS_RIGHT_1 = 1270;
+
+int COUNTS_180 = COUNTS_RIGHT_1*2;
+
+int COUNTS_RIGHT_2 = 2020;
+
 
 /*--------------------------Hardware--------------------------*/
 QEI left_encoder(PB_2, PB_1, NC, PPR, QEI::X4_ENCODING);
@@ -195,7 +196,7 @@ int main()
                 setLeftMotor(0.35f);
                 setRightMotor(0.35f);
 
-                if (avgAbsTicks() >= COUNTS_0_5M) {
+                if (avgAbsTicks() >= COUNTS_0_45M) {
                     stopMotors();
                     left_encoder.reset();
                     right_encoder.reset();
@@ -220,7 +221,7 @@ int main()
 
                     side_count++;
 
-                    if (side_count >= 4) {
+                    if (side_count >= 3) {
                         // Finished forward square: we should be back near start
                         state = FWD_STOP_AT_START;
                     } else {
@@ -231,13 +232,17 @@ int main()
             }
 
             case FWD_STOP_AT_START: {
-                // Just a clean stop state (already stopped)
-                stopMotors();
-                left_encoder.reset();
-                right_encoder.reset();
-                wait_ms(200);
-                state = TURN_180;
-                //state = DONE;
+                setLeftMotor(0.35f);
+                setRightMotor(0.35f);
+
+                if (avgAbsTicks() >= COUNTS_0_5M) {
+                    stopMotors();
+                    left_encoder.reset();
+                    right_encoder.reset();
+                    wait_ms(200);
+                    state = TURN_180;
+                    //state = DONE;
+                }
                 break;
             }
 
@@ -263,7 +268,7 @@ int main()
                 setLeftMotor(0.35f);
                 setRightMotor(0.35f);
 
-                if (avgAbsTicks() >= COUNTS_0_5M) {
+                if (avgAbsTicks() >= COUNTS_0_45M) {
                     stopMotors();
                     left_encoder.reset();
                     right_encoder.reset();
@@ -279,7 +284,7 @@ int main()
                 setLeftMotor(0.5f);
                 setRightMotor(0.35f);
 
-                if (avgAbsTurnLeft() >= COUNTS_RIGHT_2) {
+                if (avgAbsTurnLeft() >= COUNTS_RIGHT_1) {
                     stopMotors();
                     left_encoder.reset();
                     right_encoder.reset();
