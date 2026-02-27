@@ -25,7 +25,7 @@ float WHEEL_CIRC = 2.0f * PI * WHEEL_RADIUS; // ~0.2475 m
 //int COUNTS_PER_M = COUNTS_PER_WHEEL_REV/WHEEL_CIRC;
 
 float COUNTS_PER_WHEEL_REV_R = 1027.0f; //from trial and error
-float COUNTS_PER_WHEEL_REV_L = 1047.0f;
+float COUNTS_PER_WHEEL_REV_L = 1032.0f;
 
 float COUNTS_PER_M_R = (float)COUNTS_PER_WHEEL_REV_R / WHEEL_CIRC;
 float COUNTS_PER_M_L = (float)COUNTS_PER_WHEEL_REV_L / WHEEL_CIRC;
@@ -147,12 +147,14 @@ int main()
     //set enable high
     enable = 1;
 
+    stopMotors();
+
     left_encoder.reset();
     right_encoder.reset();
 
     int COUNTS_0_5M = distToTicks(1.17f);
     float THETA_90  = PI / 2.0f;
-    float THETA_180 = PI;
+    float THETA_180 = 3.4;
 
     //reading values
     int left_encoder_read_p = 0;
@@ -176,7 +178,7 @@ int main()
                 setLeftMotor(0.35f);
                 setRightMotor(0.35f);
 
-                if (estimateDistanceM() >= 0.50f) {
+                if (estimateDistanceM() >= 0.45f) {
                     stopMotors();
 
                     //read values
@@ -222,7 +224,7 @@ int main()
                 setLeftMotor(0.35f);
                 setRightMotor(0.35f);
 
-                if (estimateDistanceM() >= 0.50f) {
+                if (estimateDistanceM() >= 0.450f) {
                     stopMotors();
                     left_encoder.reset();
                     right_encoder.reset();
@@ -259,7 +261,7 @@ int main()
                 setLeftMotor(0.35f);
                 setRightMotor(0.35f);
 
-                if (estimateDistanceM() >= 0.50f) {
+                if (estimateDistanceM() >= 0.450f) {
                     stopMotors();
                     left_encoder.reset();
                     right_encoder.reset();
@@ -300,7 +302,7 @@ int main()
                 setLeftMotor(0.35f);
                 setRightMotor(0.35f);
 
-                if (estimateDistanceM() >= 0.50f) {
+                if (estimateDistanceM() >= 0.450f) {
                     stopMotors();
                     left_encoder.reset();
                     right_encoder.reset();
