@@ -36,7 +36,7 @@ int COUNTS_RIGHT_2 = (int)((23*PI/400)*COUNTS_ONE); //99.1245
 */
 int COUNTS_RIGHT_1 = 1268;
 
-int COUNTS_180 = 1269;
+int COUNTS_180 = 1271;
 
 int COUNTS_RIGHT_2 = 2020;
 
@@ -194,8 +194,8 @@ int main()
 
             // ---------- Forward square ----------
             case FWD_SIDE: {
-                setLeftMotor(0.35f);
-                setRightMotor(0.35f);
+                setLeftMotor(0.3f);
+                setRightMotor(0.3f);
 
                 if (avgAbsTicks() >= COUNTS_0_5M) {
                     stopMotors();
@@ -233,8 +233,8 @@ int main()
             }
 
             case FWD_STOP_AT_START: {
-                setLeftMotor(0.35f);
-                setRightMotor(0.35f);
+                setLeftMotor(0.3f);
+                setRightMotor(0.3f);
 
                 if (avgAbsTicks() >= COUNTS_0_5M) {
                     stopMotors();
@@ -266,8 +266,8 @@ int main()
             // ---------- Reverse square ----------
             case REV_SIDE: {
                 // Reverse direction (drive backward)
-                setLeftMotor(0.35f);
-                setRightMotor(0.35f);
+                setLeftMotor(0.3f);
+                setRightMotor(0.3f);
 
                 if (avgAbsTicks() >= COUNTS_0_5M) {
                     stopMotors();
@@ -304,8 +304,8 @@ int main()
 
             case ONE_MORE: {
                 // Reverse direction (drive backward)
-                setLeftMotor(0.35f);
-                setRightMotor(0.35f);
+                setLeftMotor(0.3f);
+                setRightMotor(0.3f);
 
                 if (avgAbsTicks() >= COUNTS_0_5M) {
                     stopMotors();
