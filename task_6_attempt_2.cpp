@@ -158,9 +158,6 @@ int main()
     int left_encoder_read_p = 0;
     int right_encoder_read_p = 0;
 
-    int left_encoder_read_rev = 0;
-    int right_encoder_read_rev = 0;
-
     while (true) {
 
         switch (state) {
@@ -185,9 +182,6 @@ int main()
                     //read values
                     left_encoder_read_p = left_encoder.getPulses();
                     right_encoder_read_p = right_encoder.getPulses();
-
-                    left_encoder_read_rev = left_encoder.getRevolutions();
-                    right_encoder_read_rev = right_encoder.getRevolutions();
 
                     left_encoder.reset();
                     right_encoder.reset();
@@ -322,9 +316,6 @@ int main()
                 stopMotors();
                 lcd.locate(0,0);
                 lcd.printf("Lpulses: %d, Rpulses: %d", left_encoder_read_p, right_encoder_read_p);
-                
-                lcd.locate(0,10);
-                lcd.printf("Lrev: %d, Rrev: %d", left_encoder_read_rev, right_encoder_read_rev);
                 while (true) { }
             }
         }
