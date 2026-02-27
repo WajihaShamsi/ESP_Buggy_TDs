@@ -7,6 +7,7 @@
 #include "QEI.h"
 #include "C12832.h"
 
+
 /*--------------------------Constants--------------------------*/
 float SAMPLE_TIME = 0.05; //s (20 Hz)
 int PPR = 256;
@@ -25,7 +26,7 @@ float WHEEL_CIRC = 2.0f * PI * WHEEL_RADIUS; // ~0.2475 m
 //int COUNTS_PER_M = COUNTS_PER_WHEEL_REV/WHEEL_CIRC;
 
 float COUNTS_PER_WHEEL_REV_R = 1027.0f; //from trial and error
-float COUNTS_PER_WHEEL_REV_L = 1032.0f;
+float COUNTS_PER_WHEEL_REV_L = 1030.0f;
 
 float COUNTS_PER_M_R = (float)COUNTS_PER_WHEEL_REV_R / WHEEL_CIRC;
 float COUNTS_PER_M_L = (float)COUNTS_PER_WHEEL_REV_L / WHEEL_CIRC;
@@ -110,6 +111,12 @@ int avgAbsTurnRight() {
     return r;
 }
 
+volatile bool go_done = false;
+//Interrupt
+void fire(){
+    go_done = true;
+}
+
 /*--------------------------FSM--------------------------*/
 enum State {
     START,
@@ -133,7 +140,8 @@ int rev_side_count = 0;
 int main()
 {
     C12832 lcd(D11, D13, D12, D7, D10); 
-
+    InterruptIn fireJoy(D4);
+    fireJoy.rise(&fire);
     speedTicker.attach(&speed_tick, SAMPLE_TIME); //20 Hz speed update
 
     // PWM frequency
@@ -153,7 +161,7 @@ int main()
     right_encoder.reset();
 
     int COUNTS_0_5M = distToTicks(1.17f);
-    float THETA_90  = PI / 2.0f;
+    float THETA_90  = 1.9f;
     float THETA_180 = 3.4;
 
     //reading values
@@ -161,6 +169,11 @@ int main()
     int right_encoder_read_p = 0;
 
     while (true) {
+
+        if (go_done && state != DONE) {
+            stopMotors();
+            state = DONE;
+        }
 
         switch (state) {
 
@@ -316,8 +329,9 @@ int main()
 
               case DONE: {
                 stopMotors();
-                lcd.locate(0,0);
-                lcd.printf("Lpulses: %d, Rpulses: %d", left_encoder_read_p, right_encoder_read_p);
+                //lcd.cls();
+                //lcd.locate(0,0);
+                //lcd.printf("Lpulses: %d, Rpulses: %d", left_encoder_read_p, right_encoder_read_p);
                 while (true) { }
             }
         }
