@@ -9,7 +9,7 @@ TD2 - Task 2
 
 
 /*--------------------------Constants--------------------------*/
-float SAMPLE_TIME = 0.05; //s (20 Hz)
+float SAMPLE_TIME = 0.01; //s (100 Hz)
 int PPR = 256;
 int GEAR_RATIO = 15;
 
@@ -20,8 +20,7 @@ float WHEEL_BASE = 0.175f; //m
 float PWM_FREQ_HZ = 20000.0f; // 20 kHz
 float WHEEL_CIRC = 2.0f * PI * WHEEL_RADIUS; // ~0.2475 m
 
-float COUNTS_PER_MOTOR_REV = PPR * 4;
-float COUNTS_PER_WHEEL_REV = COUNTS_PER_MOTOR_REV * GEAR_RATIO;
+float COUNTS_PER_WHEEL_REV = PPR * 4;
 float COUNTS_PER_M = COUNTS_PER_WHEEL_REV/WHEEL_CIRC;
 
 /*
@@ -121,13 +120,9 @@ void speed_tick() {
     vL = tickRateToVel(tickRateL, COUNTS_PER_M); // m/s
     vR = tickRateToVel(tickRateR, COUNTS_PER_M);
 
-    v_robot = 0.5f * (vR + vL);
-    w_robot = (vR - vL) / WHEEL_BASE;
+    //v_robot = 0.5f * (vR + vL);
+    //w_robot = (vR - vL) / WHEEL_BASE;
 }
-
-void setLeftMotor(float duty) {pwmL.write(duty);}
-
-void setRightMotor(float duty) {pwmR.write(duty);}
 
 /*--------------------------Main--------------------------*/
 
@@ -151,6 +146,9 @@ int main()
 
     left_encoder.reset();
     right_encoder.reset();
+
+    int left = 0;
+    int right = 0;
 
 
     while (true) {
@@ -177,5 +175,6 @@ int main()
 
         wait_us(50);
 
-               }
+        }
     }
+    
