@@ -1,0 +1,181 @@
+/* 
+TD2 - Task 2
+ */
+
+#include "mbed.h"
+#include "QEI.h"
+#include "C12832.h"
+#include <cmath>
+
+
+/*--------------------------Constants--------------------------*/
+float SAMPLE_TIME = 0.05; //s (20 Hz)
+int PPR = 256;
+int GEAR_RATIO = 15;
+
+float WHEEL_RADIUS = 0.0394f; // m
+float PI = 3.1415926f;
+float WHEEL_BASE = 0.175f; //m
+
+float PWM_FREQ_HZ = 20000.0f; // 20 kHz
+float WHEEL_CIRC = 2.0f * PI * WHEEL_RADIUS; // ~0.2475 m
+
+float COUNTS_PER_MOTOR_REV = PPR * 4;
+float COUNTS_PER_WHEEL_REV = COUNTS_PER_MOTOR_REV * GEAR_RATIO;
+float COUNTS_PER_M = COUNTS_PER_WHEEL_REV/WHEEL_CIRC;
+
+/*
+or:
+float COUNTS_PER_M_L = (float)COUNTS_PER_WHEEL_REV_L / WHEEL_CIRC;
+float COUNTS_PER_M_R = (float)COUNTS_PER_WHEEL_REV_R / WHEEL_CIRC;
+
+vL = tickRateToVel(tickRateL, COUNTS_PER_M_L);
+vR = tickRateToVel(tickRateR, COUNTS_PER_M_R);
+*/
+
+/*--------------------------Velocity Globals--------------------------*/
+
+int dL_ticks = 0;
+int dR_ticks = 0;
+
+float tickRateL = 0.0f;   // ticks/s
+float tickRateR = 0.0f;
+
+float vL = 0.0f;          // m/s (left wheel linear velocity)
+float vR = 0.0f;          // m/s (right wheel linear velocity)
+
+float v_robot = 0.0f;
+float w_robot = 0.0f;   // rad/s
+
+/*--------------------------Hardware--------------------------*/
+QEI left_encoder(PB_2, PB_1, NC, PPR, QEI::X4_ENCODING);
+QEI right_encoder(PB_15, PB_14, NC, PPR, QEI::X4_ENCODING);
+
+
+Ticker speedTicker;
+
+//initialise
+volatile int last_tick_left = 0, last_tick_right = 0; //previous encoder counts 
+
+PwmOut pwmL(PC_8);
+PwmOut pwmR(PC_6);
+
+DigitalOut enable(PC_4);
+
+// Direction only (no bipolar control pin)
+DigitalOut dirL(PA_12);
+DigitalOut dirR(PB_12);
+
+/*--------------------------Helper Functions--------------------------*/
+
+class Potentiometer //Begin updated potentiometer class definition
+{
+private: //Private data member declaration
+AnalogIn inputSignal;
+//Declaration of AnalogIn object
+float VDD, currentSampleNorm, currentSampleVolts; //Float variable to speficy the value of VDD (3.3 V for the Nucleo-64)
+public: // Public declarations
+Potentiometer(PinName pin, float v) : inputSignal(pin), VDD(v) {}
+//Constructor - user provided pin name assigned to AnalogIn...
+//VDD is also provided to determine maximum measurable voltage
+float amplitudeVolts(void) //Public member function to measure the amplitude in volts
+{
+return (inputSignal.read()*VDD); //Scales the 0.0-1.0 value by VDD to read the input in volts
+}
+float amplitudeNorm(void) //Public member function to measure the normalised amplitude
+{
+return inputSignal.read(); //Returns the ADC value normalised to range 0.0 - 1.0
+}
+void sample(void) //Public member function to read a sample and store the value as data members
+{
+currentSampleNorm = inputSignal.read(); //Read a sample from the ADC and store normalised representation [0..1]
+currentSampleVolts = currentSampleNorm*VDD; //Convert this to a voltage and store that as a data member too.
+}
+const float getCurrentSampleNorm(void) //Public member function to return the most recent normalised sample [0..1]
+{
+return currentSampleNorm; //Return the most recent normalised sample
+}
+const float getCurrentSampleVolts(void) //Public member function to return the most recent sampled voltage [0.. 3.3 V]
+{
+return currentSampleVolts; //Return the most recent sampled voltage
+}
+};
+
+static inline float tickRateToVel(float tick_rate_ticks_per_s, float counts_per_m) {
+    return tick_rate_ticks_per_s / counts_per_m;
+}
+
+void speed_tick() {
+    const int now_left  = left_encoder.getPulses();
+    const int now_right = right_encoder.getPulses();
+
+    dL_ticks = now_left  - last_tick_left;
+    dR_ticks = now_right - last_tick_right;
+
+    last_tick_left  = now_left;
+    last_tick_right = now_right;
+
+    tickRateL = (float)dL_ticks / SAMPLE_TIME; // ticks/s
+    tickRateR = (float)dR_ticks / SAMPLE_TIME;
+
+    vL = tickRateToVel(tickRateL, COUNTS_PER_M); // m/s
+    vR = tickRateToVel(tickRateR, COUNTS_PER_M);
+
+    v_robot = 0.5f * (vR + vL);
+    w_robot = (vR - vL) / WHEEL_BASE;
+}
+
+void setLeftMotor(float duty) {pwmL.write(duty);}
+
+void setRightMotor(float duty) {pwmR.write(duty);}
+
+/*--------------------------Main--------------------------*/
+
+Potentiometer potL(A0, 3.3f);
+Potentiometer potR(A1, 3.3f);
+
+int main()
+{    
+    C12832 lcd(D11, D13, D12, D7, D10);
+    speedTicker.attach(&speed_tick, SAMPLE_TIME); //20 Hz speed update
+
+        // PWM frequency
+    pwmL.period(1.0f / PWM_FREQ_HZ);
+    pwmR.period(1.0f / PWM_FREQ_HZ);
+
+    // bipolar
+    dirL = 1;
+    dirR = 1;
+
+    enable = 1;
+
+    left_encoder.reset();
+    right_encoder.reset();
+
+
+    while (true) {
+
+        float pL = potL.amplitudeNorm();
+        float pR = potR.amplitudeNorm();
+        
+        {
+            float speed1 = pL ;
+            pwmL.write(speed1);
+        }
+
+        // -------- Motor 2 --------
+        {
+            float speed2 = pR ;
+            pwmR.write(speed2);
+        }
+
+        // -------LCD Screen--------
+        lcd.locate(0,0);
+        lcd.printf("vL: %0.2f m/s", vL);
+        lcd.locate(0,10);
+        lcd.printf("vR: %0.2f m/s", vR);
+
+        wait_us(50);
+
+               }
+    }
