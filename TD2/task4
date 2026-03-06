@@ -1,0 +1,23 @@
+#include "mbed.h"
+
+AnalogIn sensor1(PA_0);
+AnalogIn sensor2(PA_1);
+AnalogIn sensor3(PA_4);
+AnalogIn sensor4(PB_0);
+AnalogIn sensor5(PC_1);
+AnalogIn sensor6(PC_0);
+
+int main(){
+    while(true){
+        float v1 = sensor1.read() * 3.3f;
+        float v2 = sensor2.read() * 3.3f;
+        float v3 = sensor3.read() * 3.3f;
+        float v4 = sensor4.read() * 3.3f;
+        float v5 = sensor5.read() * 3.3f;
+        float v6 = sensor6.read() * 3.3f;
+        
+        printf("S0: %.2f V  S1: %.2f V  S2: %.2f V  S3: %.2f V  S4: %.2f V  S5: %.2f V\n", v1, v2, v3, v4, v5, v6);
+
+        ThisThread::sleep_for(200ms);
+    }
+}
