@@ -22,7 +22,7 @@ float COUNTS_PER_M = COUNTS_PER_WHEEL_REV/WHEEL_CIRC;
 
 float Ltarget_speed = 1.0f; // m/s
 float Rtarget_speed = 1.0f; // m/s
-float Kp = 0.5f;
+float Kp = 10.0f;
 float Ki = 0.0f;
 
 
@@ -60,6 +60,9 @@ Ticker speedTicker;
 //initialise
 volatile int last_tick_left = 0, last_tick_right = 0; //previous encoder counts 
 
+
+Serial pc(USBTX, NC); 
+
 PwmOut pwmL(PC_8); // PWM output
 PwmOut pwmR(PC_6);
 
@@ -78,9 +81,11 @@ static inline float tickRateToVel(float tick_rate_ticks_per_s, float counts_per_
 
 float EnsureSafe(float x, float min_val, float max_val)
 {
-    if (x < min_val) return Kp/2;
-    if (x > max_val) return Kp/2;
+    if (x < min_val) return min_val;
+    if (x > max_val) return max_val;
+    return x;
 }
+
 
 void speed_tick() {
     const int now_left  = left_encoder.getPulses();
@@ -101,9 +106,13 @@ void speed_tick() {
     eL = Ltarget_speed - vL;
     eR = Rtarget_speed - vR;
 
+    if (uL > 1.0f || uL < 0.0f || uR > 1.0f || uR < 0.0f) {
+    Kp = Kp * 0.5f;
+    }
+
     uL = uL_prev + eL*(Kp + Ki*SAMPLE_TIME) - Kp*eL_prev;
     uR = uR_prev + eR*(Kp + Ki*SAMPLE_TIME) - Kp*eR_prev;
-        // Clamp to valid PWM range
+
     uL = EnsureSafe(uL, 0.0f, 1.0f);
     uR = EnsureSafe(uR, 0.0f, 1.0f); // 防止PWM超过100%，书P87也讲了
 
@@ -187,13 +196,14 @@ int main()
 
     while (true) {
 
-        //speedAdjust(0.20f, 0.20f);
+        pc.printf("vL=%.3f vR=%.3f eL=%.3f eR=%.3f uL=%.3f uR=%.3f Kp=%.3f\r\n",
+          vL, vR, eL, eR, uL, uR, Kp);
         // -------LCD Screen--------
         lcd.cls();
         lcd.locate(0,0);
         lcd.printf("vL: %0.2f m/s, uL: %0.2f", vL, uL);
         lcd.locate(0,10);
-        lcd.printf("vR: %0.2f m/s, uR: %0.2f", vR, uL);
+        lcd.printf("vR: %0.2f m/s, uR: %0.2f", vR, uR);
         lcd.locate(0,20);
         lcd.printf("Kp: %0.2f", Kp);
 
