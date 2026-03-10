@@ -1,0 +1,204 @@
+#include "mbed.h"
+#include "QEI.h"
+#include "C12832.h"
+#include <cmath>
+
+
+/*--------------------------Constants--------------------------*/
+float SAMPLE_TIME = 0.05; //s (20 Hz) delta t
+int PPR = 256;
+int GEAR_RATIO = 15;
+
+float WHEEL_RADIUS = 0.0394f; // m
+float PI = 3.1415926f;
+float WHEEL_BASE = 0.175f; //m
+
+float PWM_FREQ_HZ = 20000.0f; // 20 kHz
+float WHEEL_CIRC = 2.0f * PI * WHEEL_RADIUS; // ~0.2475 m 
+
+float COUNTS_PER_WHEEL_REV = PPR * 4;
+float COUNTS_PER_M = COUNTS_PER_WHEEL_REV/WHEEL_CIRC;
+
+
+float Ltarget_speed = 1.0f; // m/s
+float Rtarget_speed = 1.0f; // m/s
+float Kp = 0.0f;
+float Ki = 0.0f;
+
+
+
+/*--------------------------Velocity Globals--------------------------*/
+
+volatile int dL_ticks = 0;
+volatile int dR_ticks = 0;
+
+volatile float tickRateL = 0.0f;   // ticks/s
+volatile float tickRateR = 0.0f;
+
+volatile float vL = 0.0f;          // m/s (left wheel linear velocity)
+volatile float vR = 0.0f;          // m/s (right wheel linear velocity)
+
+volatile float uL = 0.0f;
+volatile float uR = 0.0f;
+volatile float eL = 0.0f;
+volatile float eR = 0.0f;
+volatile float uL_prev = 0.0f;     // u(k-1) for left  (PWM duty)
+volatile float uR_prev = 0.0f;     // u(k-1) for right
+volatile float eL_prev = 0.0f;     // e(k-1) for left
+volatile float eR_prev = 0.0f;     // e(k-1) for right
+
+volatile float v_robot = 0.0f;
+volatile float w_robot = 0.0f;   // rad/s
+
+/*--------------------------Hardware--------------------------*/
+QEI left_encoder(PB_2, PB_1, NC, PPR, QEI::X4_ENCODING);
+QEI right_encoder(PB_15, PB_14, NC, PPR, QEI::X4_ENCODING);
+
+
+Ticker speedTicker;
+
+//initialise
+volatile int last_tick_left = 0, last_tick_right = 0; //previous encoder counts 
+
+PwmOut pwmL(PC_8); // PWM output
+PwmOut pwmR(PC_6);
+
+DigitalOut enable(PC_4);
+
+// Direction only (no bipolar control pin)
+DigitalOut dirL(PA_12); // 这两个一直设成1就行了
+DigitalOut dirR(PB_12);
+
+/*AnalogIn pot1(A0);
+AnalogIn pot2(A1);*/
+
+static inline float tickRateToVel(float tick_rate_ticks_per_s, float counts_per_m) {
+    return tick_rate_ticks_per_s / counts_per_m; // 这已经算出来是speed了
+}
+
+float EnsureSafe(float x, float min_val, float max_val)
+{
+    if (x < min_val) return 0.5f;
+    if (x > max_val) return 0.5f;
+    return x;
+}
+
+void speed_tick() {
+    const int now_left  = left_encoder.getPulses();
+    const int now_right = right_encoder.getPulses();
+
+    dL_ticks = now_left  - last_tick_left;
+    dR_ticks = now_right - last_tick_right;
+
+    last_tick_left  = now_left;
+    last_tick_right = now_right;
+
+    tickRateL = (float)dL_ticks / SAMPLE_TIME; // ticks/s
+    tickRateR = (float)dR_ticks / SAMPLE_TIME;
+
+    vL = tickRateToVel(tickRateL, COUNTS_PER_M); // m/s
+    vR = tickRateToVel(tickRateR, COUNTS_PER_M);
+
+    eL = Ltarget_speed - vL;
+    eR = Rtarget_speed - vR;
+
+    uL = uL_prev + eL*(Kp + Ki*SAMPLE_TIME) - Kp*eL_prev;
+    uR = uR_prev + eR*(Kp + Ki*SAMPLE_TIME) - Kp*eR_prev;
+        // Clamp to valid PWM range
+    uL = EnsureSafe(uL, 0.0f, 1.0f);
+    uR = EnsureSafe(uR, 0.0f, 1.0f); // 防止PWM超过100%，书P87也讲了
+
+    v_robot = 0.5f * (vR + vL);
+    w_robot = (vR - vL) / WHEEL_BASE;
+
+    // 输出到电机
+    pwmL.write(uL);
+    pwmR.write(uR);
+
+    // 保存“上一次”的量，供下一次 tick 用
+    uL_prev = uL;
+    uR_prev = uR;
+    eL_prev = eL;
+    eR_prev = eR;
+}
+/*
+void speedAdjust(float uL_prev, float uR_prev){
+    eL = Ltarget_speed - vL;
+    eR = Rtarget_speed - vR;
+
+    uL = uL_prev + eL*(Kp + Ki*SAMPLE_TIME) - Kp*eL_prev;
+    uR = uR_prev + eR*(Kp + Ki*SAMPLE_TIME) - Kp*eR_prev;
+        // Clamp to valid PWM range
+    uL = EnsureSafe(uL, 0.0f, 1.0f);
+    uR = EnsureSafe(uR, 0.0f, 1.0f); // 防止PWM超过100%，书P87也讲了
+
+    v_robot = 0.5f * (vR + vL);
+    w_robot = (vR - vL) / WHEEL_BASE;
+
+    // 输出到电机
+    pwmL.write(uL);
+    pwmR.write(uR);
+
+    // 保存“上一次”的量，供下一次 tick 用
+    uL_prev = uL;
+    uR_prev = uR;
+    eL_prev = eL;
+    eR_prev = eR;
+}
+*/
+//float Umin = 0.0f;
+//float Umax = 1.0f;
+
+/*void setLeftMotor(float duty) {pwmL.write(duty);}
+
+void setRightMotor(float duty) {pwmR.write(duty);}*/
+
+/*--------------------------Main--------------------------*/
+
+
+int main()
+{    
+    C12832 lcd(D11, D13, D12, D7, D10);
+
+        // PWM frequency
+    pwmL.period(1.0f / PWM_FREQ_HZ);
+    pwmR.period(1.0f / PWM_FREQ_HZ);
+
+    // bipolar
+    dirL = 1;
+    dirR = 1;
+
+    enable = 1;
+
+    left_encoder.reset();
+    right_encoder.reset();
+
+    pwmL.write(0.5f);
+    pwmR.write(0.5f);
+
+    wait_ms(2000);
+/*
+    uL_prev = 0.65f;
+    uR_prev = 0.65f; //给他一个初值先跑起来
+    pwmL.write(uL_prev);
+    pwmR.write(uR_prev);
+
+*/
+    speedTicker.attach(&speed_tick, SAMPLE_TIME); //20 Hz speed update 每隔0.05s测一次速
+
+    while (true) {
+
+        //speedAdjust(0.20f, 0.20f);
+        // -------LCD Screen--------
+        lcd.cls();
+        lcd.locate(0,0);
+        lcd.printf("vL: %0.2f m/s", vL);
+        lcd.locate(0,10);
+        lcd.printf("vR: %0.2f m/s", vR);
+
+        wait_us(100);
+
+               }
+    }
+
+    // 思考一个问题，需不需要和0.5处是禁止的相关联
