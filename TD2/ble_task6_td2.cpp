@@ -3,7 +3,7 @@
 
 UnbufferedSerial hm10(PA_11, PA_12);   // PA_11=TX, PA_12=RX
 UnbufferedSerial pc(USBTX, USBRX);
-DigitalOut LED(D5);
+DigitalOut LED(PA_5); // onboard led ld3
 
 int main() {
     pc.baud(9600);
