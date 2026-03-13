@@ -1,0 +1,26 @@
+#include "mbed.h"
+#include <cmath>
+Serial pc(USBTX, NC); // Creates an instance of a Serial Connection with default parameters
+// NC is used as this example uses simplex link where the PC only receives data
+AnalogIn A(PA_0);
+AnalogIn B(PA_1);
+AnalogIn C(PA_4);
+AnalogIn D(PB_0);
+AnalogIn E(PC_1);
+AnalogIn F(PC_0);
+int main()
+{
+
+while(1) {
+
+float S1 = A.read()*3.3f;
+float S2 = B.read()*3.3f;
+float S3 = C.read()*3.3f;
+float S4 = D.read()*3.3f;
+float S5 = E.read()*3.3f;
+float S6 = F.read()*3.3f;
+pc.printf("S1: %.2f V  S2: %.2f V  S3: %.2f V  S4: %.2f V  S5: %.2f V  S6: %.2f V", S1,S2,S3,S4,S5,S6);
+
+wait_ms(500);
+}
+}
