@@ -2,8 +2,8 @@
 #include "QEI.h"
 
 const int PPR = 256;
-float WHEEL_RADIUS   = 0.0394f;
-float PI             = 3.14159f;
+const float WHEEL_RADIUS   = 0.0394f;
+const float PI             = 3.14159f;
 float COUNTS_PER_M   = (PPR * 4) / (2.0f * PI * WHEEL_RADIUS);
 
 QEI left_encoder(PB_2, PB_1, NC, PPR, QEI::X4_ENCODING);
@@ -19,9 +19,9 @@ DigitalOut dirR(PB_12);
 AnalogIn sensors[6] = {A0, A1, A2, A3, A4, A5}; 
 DigitalOut ir_pwr(D2); // Pin that turns the sensor LEDs on/off-- incase not using darlington array- not needed?
 
-float STOP_DISTANCE_MM = 200.0f;
+const float STOP_DISTANCE_MM = 200.0f;
 float BRAKE_SPEED  = 0.4f; //djust as necessary
-float MIN_PWM      = 0.1f;
+const float MIN_PWM      = 0.1f;
 
 float clean_values[6];
 int   snap_eol_L    = 0; //snaphsot of tick values when eol is triggered 
@@ -120,7 +120,7 @@ void run_following_test() {
 bool end_of_line_detected() {
     float sum = 0;
     for (int i = 0; i < 6; i++){
-        sum = sum + clean_values[i];
+        sum += clean_values[i];
     }
 
     bool all_dark = (sum < 0.1f);
@@ -136,7 +136,7 @@ return (eol_count >= eol_confirm);
 void Braking() {
     int dL = left_encoder.getPulses() - snap_eol_L;
     int dR = right_encoder.getPulses() - snap_eol_R;
-    float travelled_mm = ((dL + dR) / 2.0f) / (COUNTS_PER_M / 1000.0f);
+    float travelled_mm = ((dL + dR) / 2.0f) / (COUNTS_PER_M / 1000.0f); //averaging handles case where one wheel spins lsightly faster than the other 
     float remaining   = STOP_DISTANCE_MM - travelled_mm;
 
 
