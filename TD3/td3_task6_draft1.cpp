@@ -123,7 +123,7 @@ bool end_of_line_detected() {
         sum += clean_values[i];
     }
 
-    bool all_dark = (sum < 0.1f);
+    bool all_dark = (sum < 0.1f); //random value for now, needs to be fine tuned
     if (all_dark) {
         eol_count++;
     }
