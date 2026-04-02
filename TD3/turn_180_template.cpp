@@ -55,6 +55,12 @@ DigitalOut dirR(PB_12);
 /*AnalogIn pot1(A0);
 AnalogIn pot2(A1);*/
 
+/*--------------------------BLE--------------------------*/
+Serial hm10(PA_11, PA_12);   // PA_11=TX, PA_12=RX
+Serial pc(USBTX, USBRX);
+//DigitalOut LED(PA_5); // onboard led ld3
+void serial_config(); 
+
 static inline float tickRateToVel(float tick_rate_ticks_per_s, float counts_per_m) {
     return tick_rate_ticks_per_s / counts_per_m; // 这已经算出来是speed了
 }
@@ -83,7 +89,7 @@ void stop_motors(){
 
 void turn_180(){
     stop_motors();
-    ThisThread::sleep_for(50ms);
+    wait_ms(50);
     // reset encoders so turn starts from zero
     left_encoder.reset();
     right_encoder.reset();
@@ -108,10 +114,6 @@ void turn_180(){
     }
 
 }
-/*--------------------------BLE--------------------------*/
-UnbufferedSerial hm10(PA_11, PA_12);   // PA_11=TX, PA_12=RX
-UnbufferedSerial pc(USBTX, USBRX);
-//DigitalOut LED(PA_5); // onboard led ld3
 
 
 int main() {
@@ -128,7 +130,7 @@ int main() {
     dirR = 1;
 
     stop_motors();
-    ThisThread::sleep_for(300ms);
+    wait_ms(300);
 
     left_encoder.reset();
     right_encoder.reset();
@@ -136,35 +138,32 @@ int main() {
     speedTicker.attach(&speed_tick, SAMPLE_TIME);
 
     char s, w;
-    const char *ready = "Ready\r\n";
-    pc.write(ready, sizeof("Ready\r\n") - 1);
+
+    pc.printf("Ready\r\n");
 
     while (1) {
   
         if (hm10.readable()) {
-            if (hm10.read(&s, 1) == 1) {
-                pc.write(&s, 1);
-
+            s = hm10.getc();
+            pc.putc(s);
                 if (s == '1') {
-                    const char *msg = "\r\nTurning 180...\r\n";
-                    pc.write(msg, sizeof("Turning 180\r\n") - 1);
+                    pc.printf("\r\nTurning 180...\r\n");
                     turn_180();
-                    const char *done = "Done\r\n";
-                    pc.write(done, sizeof("Done\r\n") - 1);
+                    pc.printf("Done\r\n");
                 }
                 else if (s == '0') {
                     stop_motors();
                 }
             }
-        }
+        
 
         // PC to HM-10 (Configuration Mode)
         if (pc.readable()) {
-            if (pc.read(&w, 1) == 1) {
-                hm10.write(&w, 1);
+                w = pc.getc();
+                hm10.putc(w);
             }
-        }
+        
 
-        ThisThread::sleep_for(2ms);
+        wait_ms(2);
     }
 }
