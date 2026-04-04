@@ -21,6 +21,8 @@ float COUNTS_PER_M = COUNTS_PER_WHEEL_REV/WHEEL_CIRC;
 
 float COUNTS_180 = COUNTS_PER_M*(PI*WHEEL_BASE/2);
 
+volatile bool emergency_stop = false;
+
 /*--------------------------Velocity Globals--------------------------*/
 
 int dL_ticks = 0;
@@ -64,6 +66,7 @@ void serial_config();
 static inline float tickRateToVel(float tick_rate_ticks_per_s, float counts_per_m) {
     return tick_rate_ticks_per_s / counts_per_m; // 这已经算出来是speed了
 }
+
 void speed_tick() {
     const int now_left  = left_encoder.getPulses();
     const int now_right = right_encoder.getPulses();
@@ -88,9 +91,11 @@ void stop_motors(){
 }
 
 void turn_180(){
+    emergency_stop = false;  // reset flag
+
     stop_motors();
     wait_ms(50);
-    // reset encoders so turn starts from zero
+
     left_encoder.reset();
     right_encoder.reset();
     last_tick_left = 0;
@@ -99,9 +104,10 @@ void turn_180(){
     float pwm_left = 0.35f;
     float pwm_right = 0.65f;
 
-    while(true){
-        int leftCounts = left_encoder.getPulses();
-        int rightCounts = right_encoder.getPulses();
+    while(!emergency_stop){
+
+        int leftCounts = abs(left_encoder.getPulses());
+        int rightCounts = abs(right_encoder.getPulses());
 
         int avg = (leftCounts + rightCounts)/2;
 
@@ -109,10 +115,11 @@ void turn_180(){
         pwmR.write(pwm_right);
 
         if(avg >= COUNTS_180){
-            stop_motors();
+            break;
         }
     }
 
+    stop_motors();
 }
 
 
@@ -140,19 +147,25 @@ int main() {
     char s, w;
 
     pc.printf("Ready\r\n");
+    
 
     while (1) {
-  
+        pc.printf("Speed L: %.3f m/s | Speed R: %.3f m/s\r\n", vL, vR);        
         if (hm10.readable()) {
             s = hm10.getc();
+            pc.printf("Received: %c (%d)\r\n", s, s);
             pc.putc(s);
+            
                 if (s == '1') {
                     pc.printf("\r\nTurning 180...\r\n");
+                    wait_ms(500);
                     turn_180();
                     pc.printf("Done\r\n");
                 }
                 else if (s == '0') {
+                    emergency_stop = true;
                     stop_motors();
+                    pc.printf("EMERGENCY STOP!\r\n");
                 }
             }
         
