@@ -1,0 +1,151 @@
+#include "mbed.h"
+#include "C12832.h"
+
+C12832 lcd(D11, D13, D12, D7, D10);
+Serial pc(USBTX, USBRX);
+
+/*======================== SENSOR HARDWARE ========================*/
+AnalogIn sensors[6] = {A0, A1, A2, A3, A4, A5};
+float sensor_values[6];
+
+/*======================== LINE PID GAINS ========================*/
+float line_Kp = 0.06f;
+float line_Ki = 0.0f;
+float line_Kd = 0.0f;
+
+float base_speed_ms = 0.37f;  // m/s
+
+/*======================== LINE PID STATE ========================*/
+float error_val  = 0.0f;
+float last_error = 0.0f;
+float integral   = 0.0f;
+float derivative = 0.0f;
+float correction = 0.0f;
+
+volatile float target_speed_L = 0.0f;
+volatile float target_speed_R = 0.0f;
+
+int lost_counter = 0;
+
+/*======================== FSM ========================*/
+enum State {FOLLOWING, LOST, STOPPED};
+State current_state = FOLLOWING;
+
+/*======================== LEDs ========================*/
+class LED {
+protected:
+    DigitalOut outputSignal;
+public:
+    LED(PinName pin) : outputSignal(pin) { off(); }
+    void on()  { outputSignal = 0; }
+    void off() { outputSignal = 1; }
+};
+
+LED redLED(D5);
+LED blueLED(D8);
+LED greenLED(D9);
+
+/*======================== SENSOR FUNCTIONS ========================*/
+void read_sensors() {
+    sensor_values[0] = sensors[2].read();
+    sensor_values[2] = sensors[3].read();
+    sensor_values[3] = sensors[4].read();
+    sensor_values[5] = sensors[5].read();
+}
+
+float calculate_error() {
+    float weighted_sum = 0, total_signal = 0;
+    int active_sensors[4] = {0, 2, 3, 5};
+    float weights[4]      = {2.5f, 0.5f, -0.5f, -2.5f};
+    float threshold = 0.20f;
+    bool line_detected = false;
+
+    for (int i = 0; i < 4; i++) {
+        int idx = active_sensors[i];
+        float val = sensor_values[idx];
+        if (val > threshold) line_detected = true;
+        weighted_sum += val * weights[i];
+        total_signal += val;
+    }
+
+    if (!line_detected || total_signal < 0.1f) {
+        current_state = LOST;
+        return last_error;
+    }
+
+    current_state = FOLLOWING;
+    lost_counter = 0;
+    return weighted_sum / total_signal;
+}
+
+/*======================== LINE PID LOOP (50 Hz) ========================*/
+int pc_print_decimator = 0;
+
+void pid_control_loop() {
+    read_sensors();
+    error_val = calculate_error();
+
+    pc_print_decimator++;
+    if (pc_print_decimator >= 10) {
+        pc.printf("S0:%.2f S2:%.2f S3:%.2f S5:%.2f | Err:%.3f | Cor:%.3f | TL:%.3f | TR:%.3f | St:%d\r\n",
+            sensor_values[0], sensor_values[2],
+            sensor_values[3], sensor_values[5],
+            error_val, correction,
+            target_speed_L, target_speed_R,
+            (int)current_state);
+        pc_print_decimator = 0;
+    }
+
+    switch (current_state) {
+        case FOLLOWING:
+            greenLED.on(); blueLED.off(); redLED.off();
+
+            integral   += error_val;
+            derivative  = error_val - last_error;
+            correction  = (error_val  * line_Kp)
+                        + (integral   * line_Ki)
+                        + (derivative * line_Kd);
+            last_error  = error_val;
+
+            target_speed_L = base_speed_ms + correction;
+            target_speed_R = base_speed_ms - correction;
+            break;
+
+        case LOST:
+            greenLED.off(); blueLED.on(); redLED.off();
+            lost_counter++;
+            if (lost_counter <= 5) {
+                target_speed_L = base_speed_ms + correction;
+                target_speed_R = base_speed_ms - correction;
+            } else {
+                target_speed_L = base_speed_ms * 0.5f;
+                target_speed_R = base_speed_ms * 0.5f;
+            }
+            if (lost_counter > 150) current_state = STOPPED;
+            break;
+
+        case STOPPED:
+            greenLED.off(); blueLED.off(); redLED.on();
+            target_speed_L = 0.0f;
+            target_speed_R = 0.0f;
+            break;
+    }
+}
+
+/*======================== MAIN ========================*/
+Ticker line_ticker;
+
+int main() {
+    pc.baud(9600);
+
+    line_ticker.attach(&pid_control_loop, 0.02f);
+
+    while (true) {
+        lcd.cls();
+        lcd.locate(0, 0);
+        lcd.printf("Err:%.2f Cor:%.2f", error_val, correction);
+        lcd.locate(0, 10);
+        lcd.printf("TL:%.2f TR:%.2f", target_speed_L, target_speed_R);
+        wait(0.2);
+    }
+}
