@@ -1,0 +1,373 @@
+#include "mbed.h"
+#include "QEI.h"
+#include "C12832.h"
+#include <cmath>
+#include "Serial.h"
+
+C12832 lcd(D11, D13, D12, D7, D10);
+Serial pc(USBTX, USBRX);
+
+/*======================== SENSOR HARDWARE ========================*/
+AnalogIn sensors[6] = {A0, A1, A2, A3, A4, A5};
+float sensor_values[6];
+float min_vals[6] = {0};   // black
+float max_vals[6] = {1};   // white (avoid divide-by-zero)
+volatile int calibration_stage = 0;
+float range[6]= {0};
+
+/*======================== LINE PID GAINS ========================*/
+float line_Kp = 0.06f;
+float line_Ki = 0.0f;
+float line_Kd = 0.0f;
+
+float base_speed_ms = 0.39f;  // m/s
+
+/*======================== LINE PID STATE ========================*/
+float error_val  = 0.0f;
+float last_error = 0.0f;
+float integral   = 0.0f;
+float derivative = 0.0f;
+float correction = 0.0f;
+
+volatile float target_speed_L = 0.0f;
+volatile float target_speed_R = 0.0f;
+
+int lost_counter = 0;
+
+/*-------------------------- Speed Constants--------------------------*/
+float SAMPLE_TIME = 0.05; //s (20 Hz) delta t
+int PPR = 256;
+int GEAR_RATIO = 15;
+
+float WHEEL_RADIUS = 0.0394f; // m
+float PI = 3.1415926f;
+float WHEEL_BASE = 0.175f; //m
+
+float PWM_FREQ_HZ = 20000.0f; // 20 kHz
+float WHEEL_CIRC = 2.0f * PI * WHEEL_RADIUS; // ~0.2475 m 
+
+float COUNTS_PER_WHEEL_REV = PPR * 4;
+float COUNTS_PER_M = COUNTS_PER_WHEEL_REV/WHEEL_CIRC;
+
+float Kp_L = 0.005f;
+float Kp_R = 0.005f;
+float Ki = 0.0f;
+float Kd = 0.0f;
+
+
+/*--------------------------Velocity Globals--------------------------*/
+
+volatile int dL_ticks = 0;
+volatile int dR_ticks = 0;
+
+volatile float tickRateL = 0.0f;   // ticks/s
+volatile float tickRateR = 0.0f;
+
+volatile float vL = 0.0f;          // m/s (left wheel linear velocity)
+volatile float vR = 0.0f;          // m/s (right wheel linear velocity)
+
+volatile float uL = 0.5f;
+volatile float uR = 0.5f;
+volatile float eL = 0.0f;
+volatile float eR = 0.0f;
+volatile float uL_prev = 0.0f;     // u(k-1) for left  (PWM duty)
+volatile float uR_prev = 0.0f;     // u(k-1) for right
+volatile float eL_prev = 0.0f;     // e(k-1) for left
+volatile float eR_prev = 0.0f;     // e(k-1) for right
+volatile float eL_prev2 = 0.0f;
+volatile float eR_prev2 = 0.0f;
+
+volatile float v_robot = 0.0f;
+volatile float w_robot = 0.0f;   // rad/s
+
+
+/*--------------------------Hardware--------------------------*/
+QEI left_encoder(PB_14, PB_15, NC, PPR, QEI::X4_ENCODING);
+QEI right_encoder(PB_2, PB_1, NC, PPR, QEI::X4_ENCODING);
+InterruptIn fire(D4);
+
+PwmOut pwmL(PC_8); // PWM output
+PwmOut pwmR(PC_6);
+
+DigitalOut enable(PC_4);
+
+// Direction only (no bipolar control pin)
+DigitalOut dirL(PA_13); // 这两个一直设成1就行了
+DigitalOut dirR(PB_12);
+
+Ticker speedTicker;
+
+//initialise
+volatile int last_tick_left = 0, last_tick_right = 0; //previous encoder counts 
+
+float EnsureSafe(float x, float min_val, float max_val)
+{
+    if (x < min_val) return min_val;
+    if (x > max_val) return max_val;
+    return x;
+}
+
+static inline float tickRateToVel(float tick_rate_ticks_per_s, float counts_per_m) {
+    return tick_rate_ticks_per_s / counts_per_m; // 这已经算出来是speed了
+}
+
+
+/*======================== FSM ========================*/
+enum State {FOLLOWING, LOST, STOPPED, CALIBRATING};
+State current_state = CALIBRATING ;
+
+/*======================== LEDs ========================*/
+class LED {
+protected:
+    DigitalOut outputSignal;
+public:
+    LED(PinName pin) : outputSignal(pin) { off(); }
+    void on()  { outputSignal = 0; }
+    void off() { outputSignal = 1; }
+};
+
+LED redLED(D5);
+LED blueLED(D8);
+LED greenLED(D9);
+
+/*======================== SENSOR FUNCTIONS ========================*/
+void read_sensors() { //normalise as well
+    for (int i = 0; i < 6; i++) {
+        float raw = sensors[i].read();
+
+        float norm = 0.0f;
+
+        if (range[i] > 0.0001f) {
+            norm = (raw - min_vals[i]) / range[i];
+        }
+
+        // Clamp
+        if (norm < 0.0f) norm = 0.0f;
+        if (norm > 1.0f) norm = 1.0f;
+
+        sensor_values[i] = norm;
+    }
+
+}
+
+float calculate_error() {
+    float weighted_sum = 0, total_signal = 0;
+    //int active_sensors[6] = {0,1,2,3,4, 5};
+    float weights[6] = {2.5f, 1.5f, 0.5f, -0.5f,-1.5f,-2.5f};
+    float threshold = 0.05f; //changed for strip board sensitivitly levels
+    bool line_detected = false;
+
+    for (int i = 0; i < 6; i++) {
+        //int idx = active_sensors[i];
+        float val = sensor_values[i];
+        if (val > threshold) line_detected = true;
+        weighted_sum += val * weights[i];
+        total_signal += val;
+    }
+
+    if (!line_detected || total_signal < 0.07f) {
+        current_state = LOST;
+        return last_error;
+    }
+
+    current_state = FOLLOWING;
+    lost_counter = 0;
+    if (total_signal > 0.0001f)
+    return weighted_sum / total_signal;
+    else
+    return last_error;
+}
+
+/*======================== LINE PID LOOP (50 Hz) ========================*/
+int pc_print_decimator = 0;
+
+void pid_control_loop() {
+
+    // handle LEDs first
+    switch (current_state) {
+        case CALIBRATING:
+            greenLED.on(); blueLED.off(); redLED.on();
+            return; // skip rest
+
+        case FOLLOWING:
+            greenLED.on(); blueLED.off(); redLED.off();
+            break;
+
+        case LOST:
+            greenLED.off(); blueLED.on(); redLED.off();
+            break;
+
+        case STOPPED:
+            greenLED.off(); blueLED.off(); redLED.on();
+            break;
+    }
+
+    // ---- only runs if NOT calibrating ----
+    read_sensors();
+    error_val = calculate_error();
+
+    switch (current_state) {
+        case FOLLOWING:
+            integral   += error_val;
+            derivative  = error_val - last_error;
+            correction  = (error_val  * line_Kp)
+                        + (integral   * line_Ki)
+                        + (derivative * line_Kd);
+            last_error  = error_val;
+
+            target_speed_L = base_speed_ms + correction;
+            target_speed_R = base_speed_ms - correction;
+            break;
+
+        case LOST:
+            lost_counter++;
+            if (lost_counter <= 5) {
+                target_speed_L = base_speed_ms + correction;
+                target_speed_R = base_speed_ms - correction;
+            } else {
+                target_speed_L = base_speed_ms - correction;
+                target_speed_R = base_speed_ms + correction;
+            }
+            if (lost_counter > 150) current_state = STOPPED;
+            break;
+
+        case STOPPED:
+            target_speed_L = 0.0f;
+            target_speed_R = 0.0f;
+            break;
+
+        default:
+            break;
+    }
+}
+
+void speed_tick() {
+    if (current_state == CALIBRATING) {
+    pwmL.write(0.5f);
+    pwmR.write(0.5f);
+    return;
+}   
+    const int now_left  = left_encoder.getPulses();
+    const int now_right = right_encoder.getPulses();
+
+    dL_ticks = now_left  - last_tick_left;
+    dR_ticks = now_right - last_tick_right;
+
+    last_tick_left  = now_left;
+    last_tick_right = now_right;
+
+    tickRateL = (float)dL_ticks / SAMPLE_TIME; // ticks/s
+    tickRateR = (float)dR_ticks / SAMPLE_TIME;
+
+    vL = tickRateToVel(tickRateL, COUNTS_PER_M); // m/s
+    vR = tickRateToVel(tickRateR, COUNTS_PER_M);
+
+    eL = target_speed_L - vL;
+    eR = target_speed_R - vR;
+    uL = uL_prev - eL*Kp_L;
+    uR = uR_prev - eR*Kp_R;
+    //uL = uL_prev + eL*(Kp + Ki*SAMPLE_TIME + Kd/SAMPLE_TIME) + eL_prev*(-Kp - 2*(Kd/SAMPLE_TIME)) + (Kd/SAMPLE_TIME)*eL_prev2;
+    //uR = uR_prev + eR*(Kp + Ki*SAMPLE_TIME + Kd/SAMPLE_TIME) + eR_prev*(-Kp - 2*(Kd/SAMPLE_TIME)) + (Kd/SAMPLE_TIME)*eR_prev2;
+        // Clamp to valid PWM range
+    uL = EnsureSafe(uL, 0.0f, 1.0f);
+    uR = EnsureSafe(uR, 0.0f, 1.0f); // 防止PWM超过100%，书P87也讲了
+
+    /*pc.printf("vL: %.2f\n\r", vL);
+    pc.printf("PWML: %.2f\n\r", uL);
+    pc.printf("vR: %.2f\n\r", vR);
+    pc.printf("PWMR: %.2f\n\r", uR);
+    wait_ms(1000);*/
+
+    v_robot = 0.5f * (vR + vL);
+    w_robot = (vR - vL) / WHEEL_BASE;
+
+    // 输出到电机
+    pwmL.write(uL);
+    pwmR.write(uR);
+
+    // 保存“上一次”的量，供下一次 tick 用
+    uL_prev = uL;
+    uR_prev = uR;
+
+    eL_prev2 = eL_prev;
+    eR_prev2 = eR_prev;
+
+    eL_prev = eL;
+    eR_prev = eR;
+}
+
+void trigger_calibration() {
+    calibration_stage++;
+}
+/*======================== MAIN ========================*/
+Ticker line_ticker;
+
+int main() {
+    pc.baud(9600);
+    fire.rise(&trigger_calibration); //to calibrate 
+    pc.printf("Step 1: Place sensors on BLACK and press button.\r\n");
+
+    line_ticker.attach(&pid_control_loop, 0.02f);
+    // PWM frequency
+    pwmL.period(1.0f / PWM_FREQ_HZ);
+    pwmR.period(1.0f / PWM_FREQ_HZ);
+
+    // bipolar
+    dirL = 1;
+    dirR = 1;
+
+    enable = 1;
+
+    left_encoder.reset();
+    right_encoder.reset();
+
+    uL_prev = 0.5; // this is pwm code 
+    uR_prev = 0.5;
+    pwmL.write(uL_prev);
+    pwmR.write(uR_prev);
+
+    wait_ms(2000);
+    speedTicker.attach(&speed_tick, SAMPLE_TIME); //20 Hz speed update 每隔0.05s测一次速
+
+    while (true) {
+/*
+        lcd.cls();
+        lcd.locate(0, 0);
+        lcd.printf(" Cor:%.2f", correction);
+        lcd.locate(0, 10);
+        lcd.printf("TL:%.2f TR:%.2f", target_speed_L, target_speed_R);
+        lcd.locate(0,20);
+        lcd.printf("vL:%.2f vR:%.2f", vL, vR);
+        wait(0.2);
+        */
+
+        // -------- CALIBRATION LOGIC --------
+        if (calibration_stage == 1) {
+            current_state = CALIBRATING;
+            pc.printf("\r\n--- CALIBRATING BLACK ---\r\n");
+            for (int i = 0; i < 6; i++) {
+                min_vals[i] = sensors[i].read();
+            }
+            pc.printf("Black stored.\r\n");
+            pc.printf("Step 2: Place sensors on WHITE and press button.\r\n");
+            calibration_stage = 2;
+        }
+
+        else if (calibration_stage == 3) {
+            pc.printf("\r\n--- CALIBRATING WHITE ---\r\n");
+            for (int i = 0; i < 6; i++) {
+                max_vals[i] = sensors[i].read();
+                range[i]=max_vals[i]-min_vals[i];
+            }
+            pc.printf("White stored. Calibration COMPLETE!\r\n");
+            calibration_stage = 0;
+             current_state = FOLLOWING;
+        }
+
+        pc.printf("Err:%.2f Cor:%.2f TL:%.2f, TR:%.2f \r\n", error_val, correction,target_speed_L, target_speed_R);
+        pc.printf("vL: %0.2f m/s", vL);
+        pc.printf("vR: %0.2f m/s\r\n", vR);
+        //pc.printf("NormSensor val: S0:%.2f, S1:%.2f, S2:%.2f, S3:%.2f, S4:%.2f, S5:%.2f \r\n",sensor_values[0],sensor_values[1],sensor_values[2],sensor_values[3],sensor_values[4],sensor_values[5]);
+        wait_ms(1000);
+    }
+}
