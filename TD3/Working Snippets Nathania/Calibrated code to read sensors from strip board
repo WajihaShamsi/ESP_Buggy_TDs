@@ -1,0 +1,51 @@
+#include "mbed.h"
+
+Serial pc(USBTX, USBRX);
+AnalogIn sensors[6] = {A0, A1, A2, A3, A4, A5};
+InterruptIn fire(D4); // Joystick center button
+
+float weights[6] = {-2.5, -1.5, -0.5, 0.5, 1.5, 2.5};
+float offsets[6] = {0, 0, 0, 0, 0, 0}; // Stores the "black" base values
+volatile bool needs_calibration = false;
+
+// Interrupt Service Routine: Sets a flag to calibrate on the next loop
+void trigger_calibration() {
+    needs_calibration = true;
+}
+
+int main() {
+    pc.baud(9600);
+    fire.rise(&trigger_calibration); // Attach the interrupt
+
+    pc.printf("System Ready. Place sensors on black and press FIRE to calibrate.\r\n");
+
+    while (1) {
+        // Perform calibration if the button was pressed
+        if (needs_calibration) {
+            pc.printf("--- CALIBRATING --- \r\n");
+            for (int i = 0; i < 6; i++) {
+                offsets[i] = sensors[i].read();
+            }
+            needs_calibration = false;
+            pc.printf("Done! Base values stored.\r\n");
+        }
+
+        float total = 0.0f;
+        pc.printf("Adjusted: ");
+
+        for (int i = 0; i < 6; i++) {
+            // Subtract the offset from the current reading
+            float raw_val = sensors[i].read();
+            float adjusted_val = raw_val - offsets[i];
+
+            // Constrain value to 0.0 minimum so we don't get tiny negative noise
+            if (adjusted_val < 0.0f) adjusted_val = 0.0f;
+
+            total += adjusted_val * weights[i];
+            pc.printf("S%d:%.3f ", i, adjusted_val);
+        }
+
+        pc.printf("| Total:%.3f\r\n", total);
+        wait(0.5); 
+    }
+}
