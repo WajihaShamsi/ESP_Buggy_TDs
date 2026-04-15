@@ -17,9 +17,9 @@ volatile int calibration_stage = 0;
 float range[6]= {0};
 
 /*======================== LINE PID GAINS ========================*/
-float line_Kp = 0.03f;
+float line_Kp = 0.025f;
 float line_Ki = 0.0f;
-float line_Kd = 0.0f;
+float line_Kd = 0.06f;
 
 float base_speed_ms = 0.13f;  // m/s
 
