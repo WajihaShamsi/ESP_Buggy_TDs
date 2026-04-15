@@ -1,0 +1,78 @@
+#include "mbed.h"
+
+Serial pc(USBTX, USBRX);
+AnalogIn sensors[6] = {A0, A1, A2, A3, A4, A5};
+InterruptIn fire(D4); // Joystick center button
+
+float weights[6] = {-2.5, -1.5, -0.5, 0.5, 1.5, 2.5};
+
+// Calibration arrays
+float min_vals[6] = {0};   // black
+float max_vals[6] = {1};   // white (start non-zero to avoid divide by 0)
+
+// Calibration state
+volatile int calibration_stage = 0;
+
+// Interrupt: advance calibration stage
+void trigger_calibration() {
+    calibration_stage++;
+}
+
+int main() {
+    pc.baud(9600);
+    fire.rise(&trigger_calibration);
+
+    pc.printf("System Ready.\r\n");
+    pc.printf("Step 1: Place sensors on BLACK and press button.\r\n");
+
+    while (1) {
+
+        // -------- CALIBRATION LOGIC --------
+        if (calibration_stage == 1) {
+            pc.printf("\r\n--- CALIBRATING BLACK ---\r\n");
+            for (int i = 0; i < 6; i++) {
+                min_vals[i] = sensors[i].read();
+            }
+            pc.printf("Black stored.\r\n");
+            pc.printf("Step 2: Place sensors on WHITE and press button.\r\n");
+            calibration_stage = 2;
+        }
+
+        else if (calibration_stage == 3) {
+            pc.printf("\r\n--- CALIBRATING WHITE ---\r\n");
+            for (int i = 0; i < 6; i++) {
+                max_vals[i] = sensors[i].read();
+            }
+            pc.printf("White stored. Calibration COMPLETE!\r\n");
+            calibration_stage = 0;
+        }
+
+        // -------- SENSOR PROCESSING --------
+        float total = 0.0f;
+        pc.printf("norm: ");
+
+        for (int i = 0; i < 6; i++) {
+            float raw = sensors[i].read();
+
+
+            float range = max_vals[i] - min_vals[i];
+            float norm = 0.0f;
+
+            if (range > 0.0001f) {
+                norm = (raw - min_vals[i]) / range;
+            }
+
+            // Clamp 0–1
+            if (norm < 0.0f) norm = 0.0f;
+            if (norm > 1.0f) norm = 1.0f;
+
+            total += norm * weights[i];
+
+            pc.printf("S%d:%.2f ", i, norm);
+        }
+
+        pc.printf("| Total: %.3f\r\n", total);
+
+        wait(0.5);
+    }
+}
