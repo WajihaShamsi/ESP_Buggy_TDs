@@ -1,0 +1,131 @@
+#include "mbed.h"
+
+AnalogIn A(PA_0);
+AnalogIn B(PA_1);
+AnalogIn C(PA_4);
+AnalogIn D(PB_0);
+AnalogIn E(PC_1);
+AnalogIn F(PC_0);
+
+//----------------------之前预设好的PWM参数---------------------//
+PwmOut pwmL(PC_8);
+PwmOut pwmR(PC_6);
+DigitalOut enable(PC_4);
+DigitalOut dirL(PA_13);
+DigitalOut dirR(PB_12);
+float PWM_FREQ_HZ = 20000.0f; // 20 kHz
+
+//-----------------------PI control------------------------//
+float Kp = 0.1f; //???不知道是多少
+float last_position = 0.0f;
+//float Ki = 0.01f;
+//float Ts = 0.05f;
+//flaot integral = 0.0f;
+
+
+//---------------------由Control system控制的函数-------------------//
+void SetMotor(float rightpwm, float leftpwm){
+    if (leftpwm > 1.0f) leftpwm = 1.0f;
+    if (leftpwm < 0.0f) leftpwm = 0.0f;
+    if (rightpwm > 1.0f) rightpwm = 1.0f;
+    if (rightpwm < 0.0f) rightpwm = 0.0f;
+
+    pwmL.write(leftpwm);
+    pwmR.write(rightpwm);
+}
+
+void StopMotor(){
+    pwmL.write(0.5);
+    pwmR.write(0.5);
+}
+
+//void Initial_speed(){
+  //  pwmL.write(0.35);
+    //pwmR.write(0.35);
+//}
+
+
+//----------------------白线和黑线的偏差是error---------------------//
+float Calculate_position(){//error
+    float a = A.read();
+    float b = B.read();
+    float c = C.read();
+    float d = D.read();
+    float e = E.read();
+    float f = F.read();
+    float sum = a+b+c+d+e+f;
+
+    if (sum < 0.0001f) {
+        return 0.0f; // 如果全白（或全黑），直接返回 0，避免除以0
+    }
+
+    // A:-3  B:-2  C:-1  whiteline:0  D:1  E:2  F:3
+    float position = (a*(-3)+b*(-2)-c+d+2*e+3*f)/sum;
+    return position;
+}
+
+int main() {
+// PWM frequency
+    pwmL.period(1.0f / PWM_FREQ_HZ);
+    pwmR.period(1.0f / PWM_FREQ_HZ);
+    // bipolar
+    dirL = 1;
+    dirR = 1;
+    enable = 1;
+
+    float referpwm = 0.4;
+
+    float startup = 0.0f;
+    while(startup < referpwm) {
+    startup += 0.01f;
+    pwmL.write(startup);
+    pwmR.write(startup);
+    wait_ms(20);
+}
+    
+    //------------------------修正方向------------------------//
+    while(1){
+        float a = A.read();
+        float b = B.read();
+        float c = C.read();
+        float d = D.read();
+        float e = E.read();
+        float f = F.read();
+
+        float sum = a+b+c+d+e+f;
+        float position = last_position;
+        float correction = 0.0f;
+
+    //丢线处理
+        if (sum < 0.01f) {
+            if (last_position < 0) {
+            correction = 0.1f;//向左找
+            }
+            else if (last_position > 0) {
+            correction = -0.1f;//向右找
+            }
+            else {
+            correction = 0.0f;
+            }
+        }
+        else{
+            position = Calculate_position();
+            correction = Kp * position;
+        }
+
+        float leftpwm =  referpwm + correction;
+        float rightpwm = referpwm - correction;
+
+        SetMotor(rightpwm, leftpwm);
+
+        last_position = position;
+        wait_ms(5);
+    }
+}
+//前进直线的pwm是多少？0.35？
+//correction = Kp*error
+//Kp是多少？
+//转速和pwm的值的关系需要确认
+
+//可以运行，但是自动转向方向反了，需要矫正
+//自动转向已修复，但丢线处理只有左边的轮子在转
