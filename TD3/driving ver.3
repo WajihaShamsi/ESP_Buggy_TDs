@@ -16,7 +16,7 @@ DigitalOut dirR(PB_12);
 float PWM_FREQ_HZ = 20000.0f; // 20 kHz
 
 //-----------------------PI control------------------------//
-float Kp = 0.1f; //???不知道是多少
+float Kp = 0.1f; 
 float last_position = 0.0f;
 //float Ki = 0.01f;
 //float Ts = 0.05f;
@@ -24,7 +24,8 @@ float last_position = 0.0f;
 
 // 需要实验测出来
 //float sensor_offset = 0.0f;   // 传感器中心偏移
-float motor_bias = 0.2f;     // 右轮补偿：右轮偏快就加一点，让它更慢
+int stopcounter = 0.0f;
+
 
 
 //---------------------由Control system控制的函数-------------------//
@@ -104,6 +105,7 @@ int main() {
 
     //丢线处理
         if (sum < 0.01f) {
+            stopcounter++;
             changespeed = 0.4;
             if (last_position < 0) {
             correction = -0.15f;//向左找
@@ -117,7 +119,7 @@ int main() {
         }
         else{
             position = Calculate_position();//减少右侧偏置
-            //referpwm = 0.23;
+            stopcounter = 0;
             changespeed = 0.24;
             changespeed = referpwm + 0.08f * fabsf(position);//偏移越大速度越小
             correction = Kp * position;
@@ -126,9 +128,14 @@ int main() {
         float leftpwm =  changespeed + correction;
         float rightpwm = changespeed - correction;
 
+        //--------到达尽头，停止---------//
+        if (stopcounter > 25){
+            StopMotor();
+            break;
+        }
+
         SetMotor(rightpwm, leftpwm);
         last_position = position;
         wait_ms(5);
     }
 }
-//
