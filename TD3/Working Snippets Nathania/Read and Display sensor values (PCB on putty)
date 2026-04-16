@@ -1,0 +1,42 @@
+
+#include "mbed.h"
+#include "QEI.h"
+#include "C12832.h"
+#include <cmath>
+#include "Serial.h"
+
+Serial pc(USBTX, USBRX);
+AnalogIn sensors[6] = {A0, A1, A2, A3, A4 ,A5};
+DigitalOut d0(D3);  
+DigitalOut d1(D4);
+DigitalOut d2(D5);
+DigitalOut d3(D6);
+DigitalOut d4(D7);
+DigitalOut d5(D8);
+
+
+int main() {
+    d0=1;
+    d1=1;
+    d2=1;
+    d3=1;
+    d4=1;
+    d5=1;
+    pc.baud(9600);
+    while (true) {
+    pc.printf("Sensors: ");
+        float total=0.0f;
+        for (int i = 0; i < 6; i++) {
+            float val = sensors[i].read(); // 0.0 → 1.0
+            pc.printf("S%d:%.3f ", i, val);
+        }
+
+        pc.printf("\r\n");
+        wait(0.5); // 500 ms
+        
+    
+    
+
+       
+    }
+}
