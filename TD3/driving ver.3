@@ -79,7 +79,7 @@ int main() {
     enable = 1;
 
     //float referpwm = 0.23;
-    float referpwm = 0.24;
+    float referpwm = 0.35;
 
     float startup = 0.0f;
     while(startup < referpwm) {
@@ -120,7 +120,7 @@ int main() {
         else{
             position = Calculate_position();//减少右侧偏置
             stopcounter = 0;
-            changespeed = 0.24;
+            changespeed = 0.35;
             changespeed = referpwm + 0.08f * fabsf(position);//偏移越大速度越小
             correction = Kp * position;
         }
