@@ -11,7 +11,7 @@ int GEAR_RATIO = 15;
 
 float WHEEL_RADIUS = 0.0394f; // m
 float PI = 3.1415926f;
-float WHEEL_BASE = 0.175f; //m
+float WHEEL_BASE = 0.19f; //m
 
 float PWM_FREQ_HZ = 20000.0f; // 20 kHz
 float WHEEL_CIRC = 2.0f * PI * WHEEL_RADIUS; // ~0.2475 m 
