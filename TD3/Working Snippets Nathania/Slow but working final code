@@ -17,7 +17,7 @@ volatile int calibration_stage = 0;
 float range[6]= {0};
 
 /*======================== LINE PID GAINS ========================*/
-float line_Kp = 0.025f;
+float line_Kp = 0.03f;
 float line_Ki = 0.0f;
 float line_Kd = 0.06f;
 
@@ -36,7 +36,7 @@ volatile float target_speed_R = 0.0f;
 int lost_counter = 0;
 
 /*-------------------------- Speed Constants--------------------------*/
-float SAMPLE_TIME = 0.05; //s (20 Hz) delta t
+float SAMPLE_TIME = 0.02; //s (20 Hz) delta t
 int PPR = 256;
 int GEAR_RATIO = 15;
 
@@ -224,7 +224,7 @@ void pid_control_loop() {
 
         lost_counter++;
 
-        float search_turn = 0.05f;   // turning strength (tune this)
+        float search_turn = 0.12f;   // turning strength (tune this)
 
         if (last_error > 0) {
             // line was on LEFT → turn LEFT HARD
@@ -317,7 +317,7 @@ int main() {
     fire.rise(&trigger_calibration); //to calibrate 
     pc.printf("Step 1: Place sensors on BLACK and press button.\r\n");
 
-    line_ticker.attach(&pid_control_loop, 0.02f);
+    line_ticker.attach(&pid_control_loop, 0.01f);
     // PWM frequency
     pwmL.period(1.0f / PWM_FREQ_HZ);
     pwmR.period(1.0f / PWM_FREQ_HZ);
