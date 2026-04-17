@@ -3,6 +3,8 @@
 #include <cmath>
 #include "Serial.h"
 Serial pc(USBTX, USBRX);
+Serial hm10(PA_11, PA_12);   // PA_11=TX, PA_12=RX
+
 
 /*======================== SENSOR HARDWARE ========================*/
 AnalogIn sensors[6] = {A0, A1, A2, A3, A4, A5};
@@ -15,11 +17,11 @@ float max_vals[6] = {0.918f, 0.875f, 0.916F, 0.920f, 0.920f, 0.806f};  // white
 float range[6]   = {0};
 
 /*======================== LINE PID GAINS ========================*/
-float line_Kp = 0.06f;
+float line_Kp = 0.04f;
 float line_Ki = 0.0f;
-float line_Kd = 0.10f;
+float line_Kd = 0.08f;
 
-float base_speed_ms = 0.22f;
+float base_speed_ms = 0.25f;
 
 /*======================== LINE PID STATE ========================*/
 float error_val  = 0.0f;
@@ -45,10 +47,16 @@ float WHEEL_CIRC    = 2.0f * 3.1415926f * 0.0394f;
 float COUNTS_PER_WHEEL_REV = 256 * 4;
 float COUNTS_PER_M  = (256 * 4) / (2.0f * 3.1415926f * 0.0394f);
 
+/* 180 DEGREE TURN (ENCODER BASED) */
+float COUNTS_180 = (COUNTS_PER_M * (PI * WHEEL_BASE/2));
+
+
 float Kp_L = 0.08f;
 float Kp_R = 0.08f;
 float Ki   = 0.0f;
-float Kd   = 0.0f;
+float Kd   = 0.04f;
+/*======================== EMERGENCY ========================*/
+volatile bool emergency_stop = false;
 
 /*======================== VELOCITY GLOBALS ========================*/
 volatile int   dL_ticks = 0,  dR_ticks = 0;
@@ -88,8 +96,14 @@ static inline float tickRateToVel(float tick_rate, float counts_per_m) {
     return tick_rate / counts_per_m;
 }
 
+/*======================== MOTOR STOP ========================*/
+void stop_motors() {
+    pwmL.write(0.5f);
+    pwmR.write(0.5f);
+}
+
 /*======================== FSM ========================*/
-enum State { FOLLOWING, LOST, STOPPED };
+enum State { FOLLOWING, LOST, STOPPED, TURNING };
 State current_state = FOLLOWING;
 
 /*======================== SENSOR FUNCTIONS ========================*/
@@ -138,6 +152,9 @@ void pid_control_loop() {
     read_sensors();
     error_val = calculate_error();
 
+    if (emergency_stop || current_state == TURNING)
+        return;
+
     switch (current_state) {
         case FOLLOWING:
             integral   += error_val;
@@ -179,11 +196,8 @@ void pid_control_loop() {
 
 /*======================== SPEED TICK ========================*/
 void speed_tick() {
-    if (current_state == STOPPED) {
-        pwmL.write(0.5f);
-        pwmR.write(0.5f);
-        uL_prev = 0.5f;
-        uR_prev = 0.5f;
+    if (emergency_stop || current_state == STOPPED || current_state == TURNING) {
+        stop_motors();
         return;
     }
 
@@ -205,8 +219,8 @@ void speed_tick() {
     eL = target_speed_L - vL;
     eR = target_speed_R - vR;
 
-    uL = uL_prev - eL * Kp_L;
-    uR = uR_prev - eR * Kp_R;
+    uL = uL_prev - (eL * Kp_L)-(eL - eL_prev) * Kd; 
+    uR = uR_prev - (eR * Kp_R)-(eR - eR_prev) * Kd;
 
     uL = EnsureSafe(uL, 0.0f, 1.0f);
     uR = EnsureSafe(uR, 0.0f, 1.0f);
@@ -226,9 +240,55 @@ void speed_tick() {
     eR_prev  = eR;
 }
 
+/*======================== TURN 180 (FIXED) ========================*/
+void turn_180() {
+
+    emergency_stop = false;
+    current_state = TURNING;
+
+    stop_motors();
+    wait_ms(50);
+
+    left_encoder.reset();
+    right_encoder.reset();
+    last_tick_left = 0;
+    last_tick_right = 0;
+
+    float pwm_left = 0.35f;
+    float pwm_right = 0.65f;
+
+    while (!emergency_stop) {
+
+        int leftCounts = abs(left_encoder.getPulses());
+        int rightCounts = abs(right_encoder.getPulses());
+
+        int avg = (leftCounts + rightCounts) / 2;
+
+        pwmL.write(pwm_left);
+        pwmR.write(pwm_right);
+
+        if (avg >= COUNTS_180)
+            break;
+    }
+
+    stop_motors();
+
+    uL_prev = 0.5f;
+    uR_prev = 0.5f;
+    eL_prev = eR_prev = 0.0f;
+    eL_prev2 = eR_prev2 = 0.0f;
+    integral = 0.0f;
+    last_error = 0.0f;
+
+    current_state = FOLLOWING;
+}
+
+
+
 /*======================== MAIN ========================*/
 int main() {
     pc.baud(9600);
+    hm10.baud(9600);
 
     // Compute ranges from hardcoded min/max
     for (int i = 0; i < 6; i++) {
@@ -260,10 +320,27 @@ int main() {
     wait_ms(2000);
     speedTicker.attach(&speed_tick, SAMPLE_TIME);
 
+    char s;
+
     while (true) {
-        pc.printf("Err:%.2f Cor:%.2f TL:%.2f TR:%.2f\r\n",
-                  error_val, correction, target_speed_L, target_speed_R);
-        pc.printf("vL:%.2f m/s  vR:%.2f m/s\r\n", vL, vR);
-        wait_ms(1000);
+        if (hm10.readable()) {
+            s = hm10.getc();
+            pc.printf("BLE: %c\r\n", s);
+
+            if (s == '1') {
+                emergency_stop = false;
+                current_state = FOLLOWING;
+            }
+
+            else if (s == '2') {
+                turn_180();
+            }
+
+            else if (s == '0') {
+                emergency_stop = true;
+                current_state = STOPPED;
+                stop_motors();
+            }
+        }
     }
 }
