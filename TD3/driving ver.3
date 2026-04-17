@@ -7,6 +7,13 @@ AnalogIn D(PB_0);
 AnalogIn E(PC_1);
 AnalogIn F(PC_0);
 
+DigitalOut Ar0(D7,1);
+DigitalOut Ar1(D6,1);
+DigitalOut Ar2(D6,1);
+DigitalOut Ar3(D5,1);
+DigitalOut Ar4(D4,1);
+DigitalOut Ar5(D3,1);
+
 //----------------------之前预设好的PWM参数---------------------//
 PwmOut pwmL(PC_8);
 PwmOut pwmR(PC_6);
@@ -18,14 +25,50 @@ float PWM_FREQ_HZ = 20000.0f; // 20 kHz
 //-----------------------PI control------------------------//
 float Kp = 0.1f; 
 float last_position = 0.0f;
-//float Ki = 0.01f;
-//float Ts = 0.05f;
-//flaot integral = 0.0f;
+float Ki = 0.005f;//得测试是什么数
+float Ts = 0.005f;
+float last_correction = 0.0f;
+int lost_count = 0;
 
 // 需要实验测出来
 //float sensor_offset = 0.0f;   // 传感器中心偏移
-int stopcounter = 0.0f;
+//int stopcounter = 0.0f;
 
+//---------------------归一化函数--------------------//
+float sensMAX[6] = {0,0,0,0,0,0};
+float sensMIN[6] = {1,1,1,1,1,1};
+float sensVAL[6] = {0,0,0,0,0,0};
+
+void normalised(){
+    float raw[6];
+    raw[0] = A.read();
+    raw[1] = B.read();
+    raw[2] = C.read();
+    raw[3] = D.read();
+    raw[4] = E.read();
+    raw[5] = F.read();
+
+    //更新黑白数据,求出归一化的sensor value
+    for (int i = 0; i < 6; i++) {
+
+        if (raw[i] < sensMIN[i]) {
+        sensMIN[i] = raw[i];
+        }
+        if (raw[i] > sensMAX[i]) {
+        sensMAX[i] = raw[i];
+        }
+
+        //归一化公式
+        float range = sensMAX[i] - sensMIN[i];
+        if (range > 0.0001f) {
+        sensVAL[i] = (raw[i] - sensMIN[i])/range;
+        }
+        else {sensVAL[i] = 0;}
+        
+        if (sensVAL[i] < 0.0f) {sensVAL[i] = 0;}
+        if (sensVAL[i] > 1.0f) {sensVAL[i] = 1;}
+    }
+}
 
 
 //---------------------由Control system控制的函数-------------------//
@@ -52,12 +95,12 @@ void StopMotor(){
 
 //----------------------白线和黑线的偏差是error---------------------//
 float Calculate_position(){//error
-    float a = A.read()-0.123f;
-    float b = B.read()-0.287f;
-    float c = C.read()-0.054f;
-    float d = D.read()-0.061f;
-    float e = E.read()-0.086f;
-    float f = F.read()-0.081f;
+    float a = sensVAL[0];
+    float b = sensVAL[1];
+    float c = sensVAL[2];
+    float d = sensVAL[3];
+    float e = sensVAL[4];
+    float f = sensVAL[5];
     float sum = a+b+c+d+e+f;
 
     if (sum < 0.0001f) {
@@ -79,10 +122,10 @@ int main() {
     enable = 1;
 
     //float referpwm = 0.23;
-    float referpwm = 0.35;
+    float referpwm = 0.29;
 
     float startup = 0.0f;
-    while(startup < referpwm) {
+    while(startup < referpwm) {//防止一开始速度过快
     startup += 0.01f;
     pwmL.write(startup);
     pwmR.write(startup);
@@ -91,12 +134,14 @@ int main() {
     
     //------------------------修正方向------------------------//
     while(1){
-        float a = A.read();
-        float b = B.read();
-        float c = C.read();
-        float d = D.read();
-        float e = E.read();
-        float f = F.read();
+        normalised();
+        float a = sensVAL[0];
+        float b = sensVAL[1];
+        float c = sensVAL[2];
+        float d = sensVAL[3];
+        float e = sensVAL[4];
+        float f = sensVAL[5];
+        
 
         float sum = a+b+c+d+e+f;
         float position = last_position;
@@ -104,38 +149,43 @@ int main() {
         float changespeed = referpwm;
 
     //丢线处理
-        if (sum < 0.01f) {
-            stopcounter++;
-            changespeed = 0.4;
-            if (last_position < 0) {
-            correction = -0.15f;//向左找
+        if (sum < 0.1f) {
+            lost_count++;
+            if (last_position < 0 && lost_count > 3 ) {
+            correction = 0.08f;//向左找
             }
-            else if (last_position > 0) {
-            correction = +0.15f;//向右找
+            else if (last_position > 0 && lost_count > 3) {
+            correction = -0.08;//向右找
             }
             else {
             correction = 0.0f;
+            lost_count = 0;
             }
         }
         else{
-            position = Calculate_position();//减少右侧偏置
-            stopcounter = 0;
-            changespeed = 0.35;
-            changespeed = referpwm + 0.08f * fabsf(position);//偏移越大速度越小
+            position = Calculate_position();
+            float targetspeed = referpwm + 0.03f * fabsf(position);//偏移越大速度越小
+            static float changespeed = referpwm;
+
+            if (targetspeed < changespeed) {
+            targetspeed += 0.005f;
+            }
+            if (targetspeed > changespeed) {
+            targetspeed -= 0.005f;
+            }
+            //correction = last_correction + (Kp + Ki*Ts)*position - Kp*last_position;
             correction = Kp * position;
         }
 
         float leftpwm =  changespeed + correction;
+        //if (leftpwm < 0.3f){leftpwm = 0.3f;}
         float rightpwm = changespeed - correction;
+        //if (rightpwm < 0.3f){rightpwm = 0.3f;}
 
-        //--------到达尽头，停止---------//
-        if (stopcounter > 25){
-            StopMotor();
-            break;
-        }
 
         SetMotor(rightpwm, leftpwm);
         last_position = position;
+        last_correction = correction;
         wait_ms(5);
     }
 }
