@@ -1,0 +1,338 @@
+#include "mbed.h"
+#include "QEI.h"
+#include <cmath>
+#include "Serial.h"
+Serial pc(USBTX, USBRX);
+
+/*======================== SENSOR HARDWARE ========================*/
+AnalogIn sensors[6] = {A0, A1, A2, A3, A4, A5};
+DigitalOut darlington[6] = {D8, D7, D6, D5, D4, D3};
+float sensor_values[6];
+
+// ── Hardcode your measured black/white values here ──
+float min_vals[6] = {0.092f, 0.086f, 0.104f, 0.105f, 0.101f, 0.083f};  // black
+float max_vals[6] = {0.918f, 0.875f, 0.916F, 0.920f, 0.920f, 0.806f};  // white
+float range[6]    = {0};
+
+/*======================== LINE PID GAINS ========================*/
+float line_Kp = 0.06f;
+float line_Ki = 0.0f;
+float line_Kd = 0.10f;
+
+float base_speed_ms = 0.22f;
+
+/*======================== LINE PID STATE ========================*/
+float error_val  = 0.0f;
+float last_error = 0.0f;
+float integral   = 0.0f;
+float derivative = 0.0f;
+float correction = 0.0f;
+
+volatile float target_speed_L = 0.0f;
+volatile float target_speed_R = 0.0f;
+
+int lost_counter = 0;
+
+/*======================== SPEED CONSTANTS ========================*/
+float SAMPLE_TIME   = 0.01f;
+int   PPR           = 256;
+int   GEAR_RATIO    = 15;
+float WHEEL_RADIUS  = 0.0394f;
+float PI            = 3.1415926f;
+float WHEEL_BASE    = 0.175f;
+float PWM_FREQ_HZ   = 20000.0f;
+float WHEEL_CIRC    = 2.0f * 3.1415926f * 0.0394f;
+float COUNTS_PER_WHEEL_REV = 256 * 4;
+float COUNTS_PER_M  = (256 * 4) / (2.0f * 3.1415926f * 0.0394f);
+
+float Kp_L = 0.08f;
+float Kp_R = 0.08f;
+float Ki   = 0.0f;
+float Kd   = 0.0f;
+
+/*======================== VELOCITY GLOBALS ========================*/
+volatile int   dL_ticks = 0,  dR_ticks = 0;
+volatile float tickRateL = 0.0f, tickRateR = 0.0f;
+volatile float vL = 0.0f,  vR = 0.0f;
+volatile float uL = 0.5f,  uR = 0.5f;
+volatile float eL = 0.0f,  eR = 0.0f;
+volatile float uL_prev = 0.5f, uR_prev = 0.5f;
+volatile float eL_prev = 0.0f, eR_prev = 0.0f;
+volatile float eL_prev2 = 0.0f, eR_prev2 = 0.0f;
+volatile float v_robot = 0.0f, w_robot = 0.0f;
+
+/*======================== BRAKING CONSTANTS ========================*/
+const float STOP_DISTANCE_MM = 150.0f;  // target stop within 200mm of EOL. 150 mm to give more room
+volatile int snap_eol_L = 0;
+volatile int snap_eol_R = 0;
+int eol_count = 0;
+const int eol_confirm = 3;   // consecutive readings needed — tune if false triggers
+
+/*======================== HARDWARE ========================*/
+QEI left_encoder(PB_14, PB_15, NC, PPR, QEI::X4_ENCODING);
+QEI right_encoder(PB_2,  PB_1,  NC, PPR, QEI::X4_ENCODING);
+
+PwmOut pwmL(PC_8);
+PwmOut pwmR(PC_6);
+
+DigitalOut enable(PC_4);
+DigitalOut dirL(PA_13);
+DigitalOut dirR(PB_12);
+
+Ticker speedTicker;
+Ticker line_ticker;
+
+volatile int last_tick_left = 0, last_tick_right = 0;
+
+/*======================== HELPERS ========================*/
+float EnsureSafe(float x, float min_val, float max_val) {
+    if (x < min_val) return min_val;
+    if (x > max_val) return max_val;
+    return x;
+}
+
+static inline float tickRateToVel(float tick_rate, float counts_per_m) {
+    return tick_rate / counts_per_m;
+}
+
+/*======================== FSM ========================*/
+enum State { FOLLOWING, LOST, BRAKING, STOPPED };
+State current_state = FOLLOWING;
+
+/*======================== EOL DETECTION ========================*/
+bool end_of_line_detected() {
+    float sum = 0;
+    for (int i = 0; i < 6; i++) {
+        sum += sensor_values[i];
+    }
+
+    // all sensors near zero after normalisation = all black = end of line
+    // (assuming end of line is a solid black bar; if end is all white, flip this)
+    bool all_black = (sum > 5.4f);  // 6 sensors * ~0.9 normalised
+    // alternative: all white end of line
+    // bool all_white = (sum < 0.1f);
+
+    if (all_black) {
+        eol_count++;
+    } else {
+        eol_count = 0;
+    }
+
+    return (eol_count >= eol_confirm);
+}
+
+/*======================== BRAKING FUNCTION ========================*/
+void do_braking() {
+    int dL = left_encoder.getPulses() - snap_eol_L;
+    int dR = right_encoder.getPulses() - snap_eol_R;
+
+    float travelled_mm = ((dL + dR) / 2.0f) / (COUNTS_PER_M / 1000.0f);
+    float remaining    = STOP_DISTANCE_MM - travelled_mm;
+
+    if (remaining <= 0.0f) {
+        target_speed_L = 0.0f;
+        target_speed_R = 0.0f;
+        current_state  = STOPPED;
+        return;
+    }
+
+    // linear speed ramp from base_speed_ms down to 0 over STOP_DISTANCE_MM
+    float t     = remaining / STOP_DISTANCE_MM;
+    float speed = base_speed_ms * t;
+    if (speed < 0.0f) speed = 0.0f;
+
+    target_speed_L = speed;
+    target_speed_R = speed;
+}
+
+/*======================== SENSOR FUNCTIONS ========================*/
+void read_sensors() {
+    for (int i = 0; i < 6; i++) {
+        float raw  = sensors[i].read();
+        float norm = 0.0f;
+        if (range[i] > 0.0001f)
+            norm = (raw - min_vals[i]) / range[i];
+        if (norm < 0.0f) norm = 0.0f;
+        if (norm > 1.0f) norm = 1.0f;
+        sensor_values[i] = norm;
+    }
+}
+
+float calculate_error() {
+    float weights[6]    = {3.0f, 2.0f, 1.0f, -1.0f, -2.0f, -3.0f};
+    float weighted_sum  = 0.0f;
+    float total_signal  = 0.0f;
+    float threshold     = 0.05f;
+    bool  line_detected = false;
+
+    for (int i = 0; i < 6; i++) {
+        float val = sensor_values[i];
+        if (val > threshold) line_detected = true;
+        weighted_sum += val * weights[i];
+        total_signal += val;
+    }
+
+    if (!line_detected || total_signal < 0.07f) {
+        current_state = LOST;
+        return last_error;
+    }
+
+    current_state = FOLLOWING;
+    lost_counter  = 0;
+
+    if (total_signal > 0.0001f)
+        return weighted_sum / total_signal;
+    else
+        return last_error;
+}
+
+/*======================== LINE PID LOOP ========================*/
+void pid_control_loop() {
+    read_sensors();
+
+    // Only run line following logic if not already braking/stopped
+    if (current_state != BRAKING && current_state != STOPPED) {
+        error_val = calculate_error();
+    }
+
+    switch (current_state) {
+        case FOLLOWING:
+            integral   += error_val;
+            derivative  = error_val - last_error;
+            correction  = (error_val  * line_Kp)
+                        + (integral   * line_Ki)
+                        + (derivative * line_Kd);
+            last_error  = error_val;
+
+            target_speed_L = base_speed_ms + correction;
+            target_speed_R = base_speed_ms - correction;
+
+            // check for end of line
+            if (end_of_line_detected()) {
+                snap_eol_L = left_encoder.getPulses();
+                snap_eol_R = right_encoder.getPulses();
+                current_state = BRAKING;
+            }
+            break;
+
+        case LOST: {
+            lost_counter++;
+            float search_turn = 0.15f;
+
+            if (last_error > 0) {
+                target_speed_L = base_speed_ms - search_turn;
+                target_speed_R = base_speed_ms + search_turn;
+            } else {
+                target_speed_L = base_speed_ms + search_turn;
+                target_speed_R = base_speed_ms - search_turn;
+            }
+
+            if (lost_counter > 150) current_state = STOPPED;
+            break;
+        }
+
+        case BRAKING:
+            do_braking();  // sets target speeds; speed_tick handles PWM
+            break;
+
+        case STOPPED:
+            target_speed_L = 0.0f;
+            target_speed_R = 0.0f;
+            break;
+
+        default:
+            break;
+    }
+}
+
+/*======================== SPEED TICK ========================*/
+void speed_tick() {
+    if (current_state == STOPPED) {
+        pwmL.write(0.5f);
+        pwmR.write(0.5f);
+        uL_prev = 0.5f;
+        uR_prev = 0.5f;
+        return;
+    }
+
+    const int now_left  = left_encoder.getPulses();
+    const int now_right = right_encoder.getPulses();
+
+    dL_ticks = now_left  - last_tick_left;
+    dR_ticks = now_right - last_tick_right;
+
+    last_tick_left  = now_left;
+    last_tick_right = now_right;
+
+    tickRateL = (float)dL_ticks / SAMPLE_TIME;
+    tickRateR = (float)dR_ticks / SAMPLE_TIME;
+
+    vL = tickRateToVel(tickRateL, COUNTS_PER_M);
+    vR = tickRateToVel(tickRateR, COUNTS_PER_M);
+
+    eL = target_speed_L - vL;
+    eR = target_speed_R - vR;
+
+    uL = uL_prev - eL * Kp_L;
+    uR = uR_prev - eR * Kp_R;
+
+    uL = EnsureSafe(uL, 0.0f, 1.0f);
+    uR = EnsureSafe(uR, 0.0f, 1.0f);
+
+    v_robot = 0.5f * (vR + vL);
+    w_robot = (vR - vL) / WHEEL_BASE;
+
+    pwmL.write(uL);
+    pwmR.write(uR);
+
+    uL_prev = uL;
+    uR_prev = uR;
+
+    eL_prev2 = eL_prev;
+    eR_prev2 = eR_prev;
+    eL_prev  = eL;
+    eR_prev  = eR;
+}
+
+/*======================== MAIN ========================*/
+int main() {
+    pc.baud(9600);
+
+    // Compute ranges from hardcoded min/max
+    for (int i = 0; i < 6; i++) {
+        range[i] = max_vals[i] - min_vals[i];
+    }
+
+    // PWM setup
+    pwmL.period(1.0f / PWM_FREQ_HZ);
+    pwmR.period(1.0f / PWM_FREQ_HZ);
+
+    dirL   = 1;
+    dirR   = 1;
+    enable = 1;
+
+    left_encoder.reset();
+    right_encoder.reset();
+
+    uL_prev = 0.5f;
+    uR_prev = 0.5f;
+    pwmL.write(0.5f);
+    pwmR.write(0.5f);
+
+    for (int i = 0; i < 6; i++) {
+        darlington[i] = 1;
+    }
+
+    line_ticker.attach(&pid_control_loop, 0.01f);
+
+    wait_ms(2000);
+    speedTicker.attach(&speed_tick, SAMPLE_TIME);
+
+    while (true) {
+        pc.printf("State:%d Err:%.2f Cor:%.2f TL:%.2f TR:%.2f\r\n",
+                  current_state, error_val, correction,
+                  target_speed_L, target_speed_R);
+        pc.printf("vL:%.2f m/s  vR:%.2f m/s\r\n", vL, vR);
+        wait_ms(1000);
+    }
+}
