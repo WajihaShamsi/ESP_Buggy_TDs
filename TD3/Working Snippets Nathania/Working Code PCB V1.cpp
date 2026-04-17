@@ -5,15 +5,14 @@
 Serial pc(USBTX, USBRX);
 Serial hm10(PA_11, PA_12);   // PA_11=TX, PA_12=RX
 
-
 /*======================== SENSOR HARDWARE ========================*/
 AnalogIn sensors[6] = {A0, A1, A2, A3, A4, A5};
 DigitalOut darlington[6]={D8,D7,D6,D5,D4,D3};
 float sensor_values[6];
 
-// ── Hardcode your measured black/white values here ──
-float min_vals[6] = {0.092f, 0.086f, 0.104f, 0.105f, 0.101f, 0.083f};  // black
-float max_vals[6] = {0.918f, 0.875f, 0.916F, 0.920f, 0.920f, 0.806f};  // white
+// ── Hardcode  measured black/white values  ──
+float min_vals[6] = {0.136f, 0.106f, 0.131f, 0.134f, 0.131f, 0.100f};  // black
+float max_vals[6] = {0.932f, 0.925f, 0.930F, 0.930f, 0.928f, 0.902f};  // white
 float range[6]   = {0};
 
 /*======================== LINE PID GAINS ========================*/
@@ -35,6 +34,20 @@ volatile float target_speed_R = 0.0f;
 
 int lost_counter = 0;
 
+/*======================== EOL LATCH SYSTEM ========================*/
+int eol_counter = 0;
+const int EOL_CONFIRM = 0;
+
+bool was_centered = false;
+//bool eol_active = false;
+
+int center_counter = 0;
+const int CENTER_CONFIRM = 3;
+
+volatile int snap_eol_L = 0;
+volatile int snap_eol_R = 0;
+
+float STOP_DISTANCE_MM = 150.0f;
 /*======================== SPEED CONSTANTS ========================*/
 float SAMPLE_TIME   = 0.01f;
 int   PPR           = 256;
@@ -103,7 +116,7 @@ void stop_motors() {
 }
 
 /*======================== FSM ========================*/
-enum State { FOLLOWING, LOST, STOPPED, TURNING };
+enum State { FOLLOWING, LOST, STOPPED, TURNING, BRAKING };
 State current_state = FOLLOWING;
 
 /*======================== SENSOR FUNCTIONS ========================*/
@@ -119,32 +132,84 @@ void read_sensors() {
     }
 }
 
+/*======================== ERROR ========================*/
 float calculate_error() {
-    float weights[6]      = {3.0f, 2.0f, 1.0f, -1.0f, -2.0f, -3.0f};
-    float weighted_sum    = 0.0f;
-    float total_signal    = 0.0f;
-    float threshold       = 0.05f;
-    bool  line_detected   = false;
+
+    float weights[6] = {3, 2, 1, -1, -2, -3};
+    float sum = 0, total = 0;
+    float minv = 1, maxv = 0;
 
     for (int i = 0; i < 6; i++) {
-        float val = sensor_values[i];
-        if (val > threshold) line_detected = true;
-        weighted_sum += val * weights[i];
-        total_signal += val;
+        float v = sensor_values[i];
+        sum += v * weights[i];
+        total += v;
+        if (v < minv) minv = v;
+        if (v > maxv) maxv = v;
     }
 
-    if (!line_detected || total_signal < 0.07f) {
-        current_state = LOST;
+    // Signal gone — decide here, no double reading
+    if (total < 0.05f) {
+        if (current_state == BRAKING) return last_error;  // ← ADD THIS - don't interfere
+        if (was_centered) {
+            // was on line → end of line
+            snap_eol_L = left_encoder.getPulses();
+            snap_eol_R = right_encoder.getPulses();
+            current_state = BRAKING;
+        } else {
+            // never centred → genuinely lost
+            current_state = LOST;
+            lost_counter  = 0;
+        }
         return last_error;
     }
 
-    current_state = FOLLOWING;
-    lost_counter  = 0;
+    // Signal present — update was_centered and return error
+    float error = sum / total;
 
-    if (total_signal > 0.0001f)
-        return weighted_sum / total_signal;
-    else
-        return last_error;
+    if (fabs(error) < 0.3f) {
+        was_centered = true;
+    } else if (fabs(error) > 0.8f) {
+        was_centered = false;
+    }
+
+    return error;
+}
+
+//braking function 
+void do_braking() {
+
+    // Compute distance travelled since EOL snap
+    int dL = left_encoder.getPulses() - snap_eol_L;
+    int dR = right_encoder.getPulses() - snap_eol_R;
+
+    float avg_counts = (dL + dR) * 0.5f;
+    // convert encoder counts → meters
+    float travelled_m = avg_counts / COUNTS_PER_M;
+    // Remaining distance to stop
+    float remaining_m = (STOP_DISTANCE_MM / 1000.0f) - travelled_m;
+    // if we've reached or passed stop point → stop fully
+    if (remaining_m <= 0.0f) {
+        target_speed_L = 0.0f;
+        target_speed_R = 0.0f;
+        current_state  = STOPPED;
+        return;
+    }
+    // Normalised progress (0 → 1)
+    float t = remaining_m / (STOP_DISTANCE_MM / 1000.0f);
+    // clamp for safety
+    if (t > 1.0f) t = 1.0f;
+    if (t < 0.0f) t = 0.0f;
+    // Smooth braking curve (better than linear)
+    // quadratic slowdown = smoother near stop!!! note the difference 
+    float speed = base_speed_ms * (t * t);
+
+    // prevent "stall creep"    
+    if (speed < 0.03f) {
+        speed = 0.0f;
+    }
+    target_speed_L = speed;
+    target_speed_R = speed;
+    return;
 }
 
 /*======================== LINE PID LOOP ========================*/
@@ -152,35 +217,87 @@ void pid_control_loop() {
     read_sensors();
     error_val = calculate_error();
 
-    if (emergency_stop || current_state == TURNING)
+    if (emergency_stop || current_state == TURNING){
         return;
-
+    }
+    
     switch (current_state) {
         case FOLLOWING:
+            // 1. Check for EOL FIRST. 
+            // If we see a flat black surface, we don't care about the PID error.
+            /*if (!eol_active && end_of_line_detected()) {
+                snap_eol_L = left_encoder.getPulses();
+                snap_eol_R = right_encoder.getPulses();
+                current_state = BRAKING;
+                eol_active = true;
+                return; // Exit following immediately
+            }*/
+
+            // 2. PID Calculations
             integral   += error_val;
             derivative  = error_val - last_error;
-            correction  = (error_val  * line_Kp)
-                        + (integral   * line_Ki)
-                        + (derivative * line_Kd);
+            correction  = (error_val  * line_Kp) + (derivative * line_Kd);
             last_error  = error_val;
 
             target_speed_L = base_speed_ms + correction;
             target_speed_R = base_speed_ms - correction;
+
+            float total_signal = 0;
+            for(int i=0; i<6; i++) total_signal += sensor_values[i];
+            
+            if (total_signal < 0.05f) {
+                if (was_centered) {
+                    // was on line, now nothing → end of line
+                    snap_eol_L = left_encoder.getPulses();
+                    snap_eol_R = right_encoder.getPulses();
+                    current_state = BRAKING;
+                } else {
+                    // never was centred → genuinely lost
+                    current_state = LOST;
+                    lost_counter  = 0;
+                }
+            }
             break;
 
         case LOST: {
             lost_counter++;
-            float search_turn = 0.15f;
 
-            if (last_error > 0) {
-                target_speed_L = base_speed_ms - search_turn;
-                target_speed_R = base_speed_ms + search_turn;
-            } else {
-                target_speed_L = base_speed_ms + search_turn;
-                target_speed_R = base_speed_ms - search_turn;
+            float total_signal = 0.0f;
+            float minv = 1.0f;
+            float maxv = 0.0f;
+
+            for (int i = 0; i < 6; i++) {
+                float v = sensor_values[i];
+                total_signal += v;
+                if (v < minv) minv = v;
+                if (v > maxv) maxv = v;
             }
 
-            if (lost_counter > 150) current_state = STOPPED;
+            float variance = fabs(maxv - minv);
+
+            bool line_found =
+                (total_signal > 0.12f) &&
+                (variance > 0.12f) &&
+                ((sensor_values[2] > 0.25f) || (sensor_values[3] > 0.25f));
+
+            if (line_found) {
+                current_state = FOLLOWING;
+                lost_counter = 0;
+                break;
+            }
+
+            float search_turn = 0.10f;
+            float forward = 0.08f;
+
+            if (last_error > 0) {
+                target_speed_L = forward - search_turn;
+                target_speed_R = forward + search_turn;
+            } else {
+                target_speed_L = forward + search_turn;
+                target_speed_R = forward - search_turn;
+            }
+
+            if (lost_counter > 250) current_state = STOPPED;
             break;
         }
 
@@ -189,7 +306,12 @@ void pid_control_loop() {
             target_speed_R = 0.0f;
             break;
 
+        case BRAKING:
+            do_braking();
+            break;
+
         default:
+            current_state =STOPPED;
             break;
     }
 }
@@ -279,11 +401,11 @@ void turn_180() {
     eL_prev2 = eR_prev2 = 0.0f;
     integral = 0.0f;
     last_error = 0.0f;
-
+    
+    was_centered = false;  // must re-centre on return run before EOL can fire
+    snap_eol_L = snap_eol_R = 0;
     current_state = FOLLOWING;
 }
-
-
 
 /*======================== MAIN ========================*/
 int main() {
@@ -321,15 +443,24 @@ int main() {
     speedTicker.attach(&speed_tick, SAMPLE_TIME);
 
     char s;
-
+    
     while (true) {
+        switch (current_state){
+            case(FOLLOWING):{hm10.printf("FOLLOWING\r\n");break;}
+            case(LOST):{hm10.printf("LOST\r\n");break;}
+            case(STOPPED):{hm10.printf("STOPPED\r\n");break;}
+            case(TURNING):{hm10.printf("TURNING\r\n");break;}
+            case(BRAKING):{hm10.printf("BRAKING\r\n");break;}
+        }
         if (hm10.readable()) {
             s = hm10.getc();
             pc.printf("BLE: %c\r\n", s);
 
             if (s == '1') {
                 emergency_stop = false;
-                current_state = FOLLOWING;
+                was_centered   = false;  // ← ADD
+                snap_eol_L = snap_eol_R = 0;  // ← ADD
+                current_state  = FOLLOWING;
             }
 
             else if (s == '2') {
