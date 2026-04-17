@@ -41,7 +41,7 @@ int   PPR           = 256;
 int   GEAR_RATIO    = 15;
 float WHEEL_RADIUS  = 0.0394f;
 float PI            = 3.1415926f;
-float WHEEL_BASE    = 0.175f;
+float WHEEL_BASE    = 0.19f;
 float PWM_FREQ_HZ   = 20000.0f;
 float WHEEL_CIRC    = 2.0f * 3.1415926f * 0.0394f;
 float COUNTS_PER_WHEEL_REV = 256 * 4;
@@ -267,7 +267,7 @@ void turn_180() {
         pwmL.write(pwm_left);
         pwmR.write(pwm_right);
 
-        if (avg >= COUNTS_180*1.05)
+        if (avg >= COUNTS_180)
             break;
     }
 
