@@ -119,7 +119,7 @@ bool end_of_line_detected() {
     float sum = 0;
     for (int i = 0; i < 6; i++) sum += sensor_values[i];
 
-    bool all_black = (sum > 5.4f);
+    bool all_black = (sum < 0.3f);
 
     // Require that the line was being tracked well just before
     // last_error should be small (line was centred) if we're on the line
