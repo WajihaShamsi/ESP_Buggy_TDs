@@ -267,7 +267,7 @@ void turn_180() {
         pwmL.write(pwm_left);
         pwmR.write(pwm_right);
 
-        if (avg >= COUNTS_180)
+        if (avg >= COUNTS_180*1.05)
             break;
     }
 
