@@ -16,11 +16,11 @@ float max_vals[6] = {0.932f, 0.925f, 0.930F, 0.930f, 0.928f, 0.902f};  // white
 float range[6]   = {0};
 
 /*======================== LINE PID GAINS ========================*/
-float line_Kp = 0.04f;
+float line_Kp = 0.05f;
 float line_Ki = 0.0f;
-float line_Kd = 0.08f;
+float line_Kd = 0.1f;
 
-float base_speed_ms = 0.25f;
+float base_speed_ms = 0.40f;
 
 /*======================== LINE PID STATE ========================*/
 float error_val  = 0.0f;
@@ -47,7 +47,7 @@ const int CENTER_CONFIRM = 3;
 volatile int snap_eol_L = 0;
 volatile int snap_eol_R = 0;
 
-float STOP_DISTANCE_MM = 150.0f;
+float STOP_DISTANCE_MM = 180.0f;
 /*======================== SPEED CONSTANTS ========================*/
 float SAMPLE_TIME   = 0.01f;
 int   PPR           = 256;
@@ -67,7 +67,7 @@ float COUNTS_180 = (COUNTS_PER_M * (PI * WHEEL_BASE/2));
 float Kp_L = 0.08f;
 float Kp_R = 0.08f;
 float Ki   = 0.0f;
-float Kd   = 0.04f;
+float Kd   = 0.09f;
 /*======================== EMERGENCY ========================*/
 volatile bool emergency_stop = false;
 
@@ -166,7 +166,7 @@ float calculate_error() {
     // Signal present — update was_centered and return error
     float error = sum / total;
 
-    if (fabs(error) < 0.3f) {
+    if (fabs(error) < 0.4f) {
         was_centered = true;
     } else if (fabs(error) > 0.8f) {
         was_centered = false;
@@ -213,6 +213,9 @@ void do_braking() {
 }
 
 /*======================== LINE PID LOOP ========================*/
+//bool lost_search_left = true;
+//bool lost_search_right = true;
+
 void pid_control_loop() {
     read_sensors();
     error_val = calculate_error();
@@ -290,16 +293,60 @@ void pid_control_loop() {
             float forward = 0.08f;
 
             if (last_error > 0) {
-                target_speed_L = forward - search_turn;
-                target_speed_R = forward + search_turn;
-            } else {
-                target_speed_L = forward + search_turn;
-                target_speed_R = forward - search_turn;
+                if(lost_counter < 15){
+                    target_speed_L = forward - search_turn;
+                    target_speed_R = forward + search_turn;
+                }
+                if(lost_counter < 30){
+                    target_speed_L = forward + search_turn;
+                    target_speed_R = forward - search_turn;
+                }
+                if(lost_counter < 50){
+                    target_speed_L = forward - search_turn;
+                    target_speed_R = forward + search_turn;
+                }
+                if(lost_counter < 75){
+                    target_speed_L = forward + search_turn;
+                    target_speed_R = forward - search_turn;
+                }
+                if(lost_counter < 105){
+                    target_speed_L = forward - search_turn;
+                    target_speed_R = forward + search_turn;
+                }
+                if(lost_counter < 140){
+                    target_speed_L = forward + search_turn;
+                    target_speed_R = forward - search_turn;
+                }
+            } else {if(lost_counter < 15){
+                    target_speed_L = forward - search_turn;
+                    target_speed_R = forward + search_turn;
+                }
+                if(lost_counter < 30){
+                    target_speed_L = forward + search_turn;
+                    target_speed_R = forward - search_turn;
+                }
+                if(lost_counter < 50){
+                    target_speed_L = forward - search_turn;
+                    target_speed_R = forward + search_turn;
+                }
+                if(lost_counter < 75){
+                    target_speed_L = forward + search_turn;
+                    target_speed_R = forward - search_turn;
+                }
+                if(lost_counter < 105){
+                    target_speed_L = forward - search_turn;
+                    target_speed_R = forward + search_turn;
+                }
+                if(lost_counter < 140){
+                    target_speed_L = forward + search_turn;
+                    target_speed_R = forward - search_turn;
+                }
             }
 
-            if (lost_counter > 250) current_state = STOPPED;
+            if (lost_counter > 150) current_state = STOPPED;
             break;
         }
+
 
         case STOPPED:
             target_speed_L = 0.0f;
