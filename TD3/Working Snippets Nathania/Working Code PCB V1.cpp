@@ -11,14 +11,14 @@ DigitalOut darlington[6]={D8,D7,D6,D5,D4,D3};
 float sensor_values[6];
 
 // ── Hardcode  measured black/white values  ──
-float min_vals[6] = {0.136f, 0.106f, 0.131f, 0.134f, 0.131f, 0.100f};  // black
-float max_vals[6] = {0.932f, 0.925f, 0.930F, 0.930f, 0.928f, 0.902f};  // white
+const float min_vals[6] = {0.136f, 0.106f, 0.131f, 0.134f, 0.131f, 0.100f};  // black
+const float max_vals[6] = {0.932f, 0.925f, 0.930F, 0.930f, 0.928f, 0.902f};  // white
 float range[6]   = {0};
 
 /*======================== LINE PID GAINS ========================*/
-float line_Kp = 0.05f;
+float line_Kp = 0.07f;
 float line_Ki = 0.0f;
-float line_Kd = 0.1f;
+float line_Kd = 0.20f;
 
 float base_speed_ms = 0.40f;
 
@@ -64,10 +64,10 @@ float COUNTS_PER_M  = (256 * 4) / (2.0f * 3.1415926f * 0.0394f);
 float COUNTS_180 = (COUNTS_PER_M * (PI * WHEEL_BASE/2));
 
 
-float Kp_L = 0.08f;
-float Kp_R = 0.08f;
+float Kp_L = 0.098f;
+float Kp_R = 0.098f;
 float Ki   = 0.0f;
-float Kd   = 0.09f;
+float Kd   = 0.1f;
 /*======================== EMERGENCY ========================*/
 volatile bool emergency_stop = false;
 
@@ -117,7 +117,7 @@ void stop_motors() {
 
 /*======================== FSM ========================*/
 enum State { FOLLOWING, LOST, STOPPED, TURNING, BRAKING };
-State current_state = FOLLOWING;
+State current_state = STOPPED;
 
 /*======================== SENSOR FUNCTIONS ========================*/
 void read_sensors() {
