@@ -16,9 +16,9 @@ const float max_vals[6] = {0.932f, 0.925f, 0.930F, 0.930f, 0.928f, 0.902f};  // 
 float range[6]   = {0};
 
 /*======================== LINE PID GAINS ========================*/
-float line_Kp = 0.07f;
+float line_Kp = 0.09f;
 float line_Ki = 0.0f;
-float line_Kd = 0.20f;
+float line_Kd = 0.25f;
 
 float base_speed_ms = 0.40f;
 
@@ -38,7 +38,8 @@ int lost_counter = 0;
 int eol_counter = 0;
 const int EOL_CONFIRM = 0;
 
-bool was_centered = false;
+int centered_count = 0;
+const int CENTRED_THRESHOLD = 10;
 //bool eol_active = false;
 
 int center_counter = 0;
@@ -64,10 +65,10 @@ float COUNTS_PER_M  = (256 * 4) / (2.0f * 3.1415926f * 0.0394f);
 float COUNTS_180 = (COUNTS_PER_M * (PI * WHEEL_BASE/2));
 
 
-float Kp_L = 0.098f;
-float Kp_R = 0.098f;
+float Kp_L = 0.01f;
+float Kp_R = 0.01f;
 float Ki   = 0.0f;
-float Kd   = 0.1f;
+float Kd   = 0.15f;
 /*======================== EMERGENCY ========================*/
 volatile bool emergency_stop = false;
 
@@ -134,7 +135,6 @@ void read_sensors() {
 
 /*======================== ERROR ========================*/
 float calculate_error() {
-
     float weights[6] = {3, 2, 1, -1, -2, -3};
     float sum = 0, total = 0;
     float minv = 1, maxv = 0;
@@ -147,36 +147,34 @@ float calculate_error() {
         if (v > maxv) maxv = v;
     }
 
-    float contrast = (maxv-minv);
-//total < 0.05f || 
-    // Signal gone — decide here, no double reading
-    if (contrast < 0.06) { //modify this threshold value!!
-        if (current_state == BRAKING) return last_error;  // ← ADD THIS - don't interfere
-        if (was_centered) {
-            // was on line → end of line
+    float contrast = (maxv - minv);
+
+    if (contrast < 0.06f) {
+        if (current_state == BRAKING) return last_error;
+        if (centered_count >= CENTRED_THRESHOLD) {
             snap_eol_L = left_encoder.getPulses();
             snap_eol_R = right_encoder.getPulses();
             current_state = BRAKING;
         } else {
-            // never centred → genuinely lost
             current_state = LOST;
-            lost_counter  = 0;
+            lost_counter = 0;
         }
+        centered_count = 0;
         return last_error;
     }
 
-    // Signal present — update was_centered and return error
     float error = sum / total;
 
-    if (fabs(error) < 0.4f) {
-        was_centered = true;
-    } else if (fabs(error) > 0.8f) {
-        was_centered = false;
+    if (fabs(error) < 1.2f) { //modify this threshold
+        centered_count++;
+        if (centered_count > CENTRED_THRESHOLD)
+            centered_count = CENTRED_THRESHOLD;
+    } else {
+        centered_count = 0;
     }
 
     return error;
 }
-
 //braking function 
 void do_braking() {
 
@@ -265,7 +263,7 @@ void pid_control_loop() {
             float variance = fabs(maxv - minv);
 
             bool line_found =
-                (total_signal > 0.12f) 
+                (total_signal > 0.12f) &&
                 (variance > 0.12f) && ((sensor_values[2] > 0.25f) || (sensor_values[3] > 0.25f));
 
             if (line_found) {
@@ -434,7 +432,7 @@ void turn_180() {
     integral = 0.0f;
     last_error = 0.0f;
     
-    was_centered = false;  // must re-centre on return run before EOL can fire
+    centered_count = 0;  // must re-centre on return run before EOL can fire
     snap_eol_L = snap_eol_R = 0;
     current_state = FOLLOWING;
 }
@@ -480,7 +478,7 @@ int main() {
     
     while (true) {
         switch (current_state){
-            case(FOLLOWING):{hm10.printf("FOLLOWING\r\n");break;}
+            case(FOLLOWING):{hm10.printf(" %.2f\r\n",error_val);break;}
             case(LOST):{hm10.printf("LOST\r\n");break;}
             case(STOPPED):{hm10.printf("STOPPED\r\n");break;}
             case(TURNING):{hm10.printf("TURNING\r\n");break;}
@@ -492,8 +490,8 @@ int main() {
 
             if (s == '1') {
                 emergency_stop = false;
-                was_centered   = false;  // ← ADD
-                snap_eol_L = snap_eol_R = 0;  // ← ADD
+                centered_count = 0;  
+                snap_eol_L = snap_eol_R = 0; 
                 current_state  = FOLLOWING;
             }
 
