@@ -149,7 +149,7 @@ float calculate_error() {
 
     float contrast = (maxv - minv);
 
-    if (contrast < 0.06f) {
+    if (contrast < 0.1f) {
         if (current_state == BRAKING) return last_error;
         if (centered_count >= CENTRED_THRESHOLD) {
             snap_eol_L = left_encoder.getPulses();
@@ -276,54 +276,13 @@ void pid_control_loop() {
             float forward = 0.08f;
 
             if (last_error > 0) {
-                if(lost_counter < 15){
-                    target_speed_L = forward - search_turn;
-                    target_speed_R = forward + search_turn;
-                }
-                if(lost_counter < 30){
                     target_speed_L = forward + search_turn;
                     target_speed_R = forward - search_turn;
                 }
-                if(lost_counter < 50){
+             else {
                     target_speed_L = forward - search_turn;
                     target_speed_R = forward + search_turn;
-                }
-                if(lost_counter < 75){
-                    target_speed_L = forward + search_turn;
-                    target_speed_R = forward - search_turn;
-                }
-                if(lost_counter < 105){
-                    target_speed_L = forward - search_turn;
-                    target_speed_R = forward + search_turn;
-                }
-                if(lost_counter < 140){
-                    target_speed_L = forward + search_turn;
-                    target_speed_R = forward - search_turn;
-                }
-            } else {if(lost_counter < 15){
-                    target_speed_L = forward - search_turn;
-                    target_speed_R = forward + search_turn;
-                }
-                if(lost_counter < 30){
-                    target_speed_L = forward + search_turn;
-                    target_speed_R = forward - search_turn;
-                }
-                if(lost_counter < 50){
-                    target_speed_L = forward - search_turn;
-                    target_speed_R = forward + search_turn;
-                }
-                if(lost_counter < 75){
-                    target_speed_L = forward + search_turn;
-                    target_speed_R = forward - search_turn;
-                }
-                if(lost_counter < 105){
-                    target_speed_L = forward - search_turn;
-                    target_speed_R = forward + search_turn;
-                }
-                if(lost_counter < 140){
-                    target_speed_L = forward + search_turn;
-                    target_speed_R = forward - search_turn;
-                }
+                
             }
 
             if (lost_counter > 150) current_state = STOPPED;
