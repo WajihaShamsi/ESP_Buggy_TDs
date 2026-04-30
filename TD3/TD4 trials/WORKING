@@ -48,7 +48,7 @@ const int CENTER_CONFIRM = 3;
 volatile int snap_eol_L = 0;
 volatile int snap_eol_R = 0;
 
-float STOP_DISTANCE_MM = 180.0f;
+float STOP_DISTANCE_MM = 150.0f;
 /*======================== SPEED CONSTANTS ========================*/
 float SAMPLE_TIME   = 0.01f;
 int   PPR           = 256;
@@ -132,7 +132,8 @@ void read_sensors() {
         sensor_values[i] = norm;
     }
 }
-
+int lost_frames = 0;
+const int LOST_THRESHOLD = 25;  // tune this (5–15)
 /*======================== ERROR ========================*/
 float calculate_error() {
     float weights[6] = {3, 2, 1, -1, -2, -3};
@@ -150,18 +151,29 @@ float calculate_error() {
     float contrast = (maxv - minv);
 
     if (contrast < 0.1f) {
-        if (current_state == BRAKING) return last_error;
-        if (centered_count >= CENTRED_THRESHOLD) {
-            snap_eol_L = left_encoder.getPulses();
-            snap_eol_R = right_encoder.getPulses();
-            current_state = BRAKING;
-        } else {
-            current_state = LOST;
-            lost_counter = 0;
-        }
-        centered_count = 0;
+
+    lost_frames++;
+
+    // ✅ SHORT GAP → ignore it, keep last direction
+    if (lost_frames < LOST_THRESHOLD) {
         return last_error;
     }
+
+    // ❗ REAL LOST
+    if (current_state == BRAKING) return last_error;
+
+    if (centered_count >= CENTRED_THRESHOLD) {
+        snap_eol_L = left_encoder.getPulses();
+        snap_eol_R = right_encoder.getPulses();
+        current_state = BRAKING;
+    } else {
+        current_state = LOST;
+        lost_counter = 0;
+    }
+
+    centered_count = 0;
+    return last_error;
+}
 
     float error = sum / total;
 
@@ -449,7 +461,7 @@ int main() {
     
     while (true) {
         switch (current_state){
-            case(FOLLOWING):{hm10.printf(" %.2f\r\n",error_val);break;}
+            case(FOLLOWING):{hm10.printf(" %.2f, %.2f\r\n",error_val,lost_counter);break;}
             case(LOST):{hm10.printf("LOST\r\n");break;}
             case(STOPPED):{hm10.printf("STOPPED\r\n");break;}
             case(TURNING):{hm10.printf("TURNING\r\n");break;}
