@@ -63,7 +63,7 @@ float COUNTS_PER_WHEEL_REV = 256 * 4;
 float COUNTS_PER_M  = (256 * 4) / (2.0f * 3.1415926f * 0.0394f);
 
 /* 180 DEGREE TURN (ENCODER BASED) */
-float COUNTS_180 = (COUNTS_PER_M * (PI * WHEEL_BASE/2));
+float COUNTS_180 = (COUNTS_PER_M * (PI * WHEEL_BASE/2)+250);
 
 
 float Kp_L = 0.12f;
