@@ -19,7 +19,7 @@ float range[6]   = {0};
 /*======================== LINE PID GAINS ========================*/
 float line_Kp = 0.25f;
 float line_Ki = 0.0f;
-float line_Kd = 0.8f;
+float line_Kd = 0.82f;
 
 float base_speed_ms = 0.8f;
 
@@ -69,7 +69,7 @@ float COUNTS_180 = (COUNTS_PER_M * (PI * WHEEL_BASE/2)+250);
 float Kp_L = 0.12f;
 float Kp_R = 0.12f;
 float Ki   = 0.0f;
-float Kd   = 0.35f;
+float Kd   = 0.36f;
 /*======================== EMERGENCY ========================*/
 volatile bool emergency_stop = false;
 
@@ -403,8 +403,8 @@ void turn_180() {
     left_encoder.reset();
     right_encoder.reset();
 
-    float pwm_left  = 0.3f;
-    float pwm_right = 0.7f;
+    float pwm_left  = 0.2f;
+    float pwm_right = 0.8f;
     //bool line_found = false;
 
     while (!emergency_stop) {
