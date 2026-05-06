@@ -19,7 +19,7 @@ float range[6]   = {0};
 /*======================== LINE PID GAINS ========================*/
 float line_Kp = 1.62;
 float line_Ki = 0.0f;
-float line_Kd = 3.0f;
+float line_Kd = 1.98f;
 
 float base_speed_ms = 1.6f;
 
@@ -66,10 +66,10 @@ float COUNTS_PER_M  = (256 * 4) / (2.0f * 3.1415926f * 0.0394f);
 float COUNTS_180 = (COUNTS_PER_M * (PI * WHEEL_BASE/2)+280);
 
 
-float Kp_L = 0.95f;
+float Kp_L = 0.85f;
 float Kp_R = 0.95f;
 float Ki   = 0.0f;
-float Kd   = 1.8f;
+float Kd   = 0.9f;
 /*======================== EMERGENCY ========================*/
 volatile bool emergency_stop = false;
 
@@ -118,7 +118,7 @@ void stop_motors() {
 }
 
 /*======================== FSM ========================*/
-enum State { FOLLOWING, LOST, STOPPED, TURNING, BRAKING, BOOST};
+enum State { FOLLOWING, LOST, STOPPED, TURNING, BRAKING, BOOST, SLOW};
 State current_state = STOPPED;
 
 /*======================== SENSOR FUNCTIONS ========================*/
@@ -323,8 +323,29 @@ void pid_control_loop() {
         }
 
         case BOOST: {
-                target_speed_L = 2.0f;
-                target_speed_R = 2.0f;
+            //float line_Kp = 1.62;
+            float boost_Kp = line_Kp + 0.1;
+            float boost_Kd = line_Kd + 0.1;
+            integral   += error_val;
+            derivative  = error_val - last_error;
+            correction  = (error_val  * boost_Kp) + (derivative * boost_Kp);
+            last_error  = error_val;
+
+            target_speed_L = 2.0 + correction;
+            target_speed_R = 2.0 - correction;
+                break;
+        }
+
+        case SLOW: {
+            float slow_Kp = 0.45f;
+            float slow_Kd = 0.39f;
+            integral   += error_val;
+            derivative  = error_val - last_error;
+            correction  = (error_val  * slow_Kp) + (derivative * slow_Kd);
+            last_error  = error_val;
+
+            target_speed_L = 1.2 + correction;
+            target_speed_R = 1.2 - correction;
                 break;
         }
 
@@ -499,6 +520,7 @@ int main() {
             case(TURNING):{hm10.printf("TURNING\r\n");break;}
             case(BRAKING):{hm10.printf("BRAKING\r\n");break;}
             case(BOOST):{hm10.printf("BOOST\r\n");break;}
+            case(SLOW):{hm10.printf("SLOW\r\n");break;}
         }
         if (hm10.readable()) {
             s = hm10.getc();
@@ -512,12 +534,21 @@ int main() {
             }
 
             else if (s == '2') {
+                emergency_stop = false;
+                centered_count = 0;  
+                snap_eol_L = snap_eol_R = 0; 
                 current_state  = BOOST;
             }
 
             else if (s == '3') {
                 turn_180();
                 }
+            else if (s == '4') {
+                emergency_stop = false;
+                centered_count = 0;  
+                snap_eol_L = snap_eol_R = 0; 
+                current_state  = SLOW;
+            }
 
             else if (s == '0') {
                 emergency_stop = true;
