@@ -6,6 +6,10 @@ Serial pc(USBTX, USBRX);
 Serial hm10(PA_11, PA_12);   // PA_11=TX, PA_12=RX
 DigitalOut Bluetooth_power(PC_11);
 
+DigitalOut bipR(PC_10);
+DigitalOut bipL(PC_12);
+
+
 /*======================== SENSOR HARDWARE ========================*/
 AnalogIn sensors[6] = {A0, A1, A2, A3, A4, A5};
 DigitalOut darlington[6]={D8,D7,D6,D5,D4,D3};
@@ -248,9 +252,9 @@ void do_braking() {
 }
 
 /*======================== LINE PID LOOP ========================*/
-//bool lost_search_left = true;
-//bool lost_search_right = true;
 
+int incline_tick = 0;
+bool incline_brake_phase = false;
 void pid_control_loop() {
     read_sensors();
     error_val = calculate_error();
@@ -405,22 +409,41 @@ void pid_control_loop() {
 }
 
     case INCLINE: {
+            prev_state = INCLINE;
+
             Kp_L = 0.3f;
             Kp_R = 0.3f;
             Kd = 0.5f;
+
             float incline_Kp = 0.2f;
             float incline_Kd = 0.5f;
+
             integral   += error_val;
             derivative  = error_val - last_error;
             correction  = (error_val * incline_Kp) + (derivative * incline_Kd);
             last_error  = error_val;
 
-            target_speed_L = 0.25f + correction;
-            target_speed_R = 0.25f - correction;
+            incline_tick++;
 
-            prev_state = INCLINE;
-            break;
+            // line_ticker is 0.005s, so:
+            // 300 ticks = 1.5 sec forward
+            // 60 ticks  = 0.3 sec backward/brake
+            if (incline_tick < 300) {
+                incline_brake_phase = false;
+                target_speed_L = 0.3f + correction;
+                target_speed_R = 0.3f - correction;
+            }
+            else if (incline_tick < 360) {
+                incline_brake_phase = true;
+                target_speed_L = -0.2f + correction;
+                target_speed_R = -0.2f - correction;
+            }
+            else {
+                incline_tick = 0;
     }
+
+    break;
+}
 
 
         case STOPPED:
@@ -476,13 +499,14 @@ void speed_tick() {
     float duL = -(eL * Kp_L) - ((eL - eL_prev) * Kd);
     float duR = -(eR * Kp_R) - ((eR - eR_prev) * Kd);
 
+
     duL = EnsureSafe(duL, -0.4f, 0.4f);
     duR = EnsureSafe(duR, -0.4f, 0.4f);
 
     uL = uL_prev + duL;
     uR = uR_prev + duR;
 
-    if (current_state == SLOW) {
+    if (current_state == SLOW || current_state == INCLINE) {
     uL = EnsureSafe(uL, 0.20f, 0.80f);
     uR = EnsureSafe(uR, 0.20f, 0.80f);
     }
@@ -490,6 +514,7 @@ void speed_tick() {
         uL = EnsureSafe(uL, 0.0f, 1.0f);
         uR = EnsureSafe(uR, 0.0f, 1.0f);
     }
+
 
     v_robot = 0.5f * (vR + vL);
     w_robot = (vR - vL) / WHEEL_BASE;
@@ -565,6 +590,15 @@ void turn_180() {
 
 /*======================== MAIN ========================*/
 int main() {
+    
+    /*// PWM setup
+    pwmL.period(1.0f / PWM_FREQ_HZ);
+    pwmR.period(1.0f / PWM_FREQ_HZ);
+
+    dirL = 1;
+    dirR = 1;
+    enable = 1;*/
+    
     pc.baud(9600);
     hm10.baud(9600);
     Bluetooth_power=1;
@@ -582,6 +616,11 @@ int main() {
     dirL = 1;
     dirR = 1;
     enable = 1;
+
+    
+    bipR = 0;
+    bipL = 0;
+
 
     left_encoder.reset();
     right_encoder.reset();
@@ -604,6 +643,9 @@ int main() {
     char s;
     
     while (true) {
+    
+    //pwmL.write(0.2);
+    //pwmR.write(0.2);
         switch (current_state){
             case(FOLLOWING):{hm10.printf(" %.2f, %.2f\r\n",error_val,lost_counter);break;}
             case(LOST):{hm10.printf("LOST\r\n");break;}
@@ -644,9 +686,16 @@ int main() {
 
             else if (s == '5') {
                 emergency_stop = false;
-                centered_count = 0;  
-                snap_eol_L = snap_eol_R = 0; 
-                current_state  = INCLINE;
+                centered_count = 0;
+                snap_eol_L = snap_eol_R = 0;
+
+                incline_tick = 0;
+                incline_brake_phase = false;
+                uL_prev = 0.5f;
+                uR_prev = 0.5f;
+                eL_prev = eR_prev = 0.0f;
+
+                current_state = INCLINE;
             }
 
             else if (s == '0') {
@@ -658,4 +707,4 @@ int main() {
     }
 }
 //传感器偏置需要重新测量 Sensors zero bias need to re-test after use darlington array
-//传感器红外开关时间仍需确认，防止系统过慢
+//传感器红外开关时间仍需确认，防止系统过慢 replace
