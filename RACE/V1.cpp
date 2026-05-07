@@ -23,7 +23,7 @@ float range[6]   = {0};
 /*======================== LINE PID GAINS ========================*/
 float line_Kp = 1.45f;
 float line_Ki = 0.0f;
-float line_Kd = 1.95f;
+float line_Kd = 2.0f;
 
 float base_speed_ms = 1.6f;
 
